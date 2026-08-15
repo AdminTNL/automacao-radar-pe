@@ -24,15 +24,15 @@ Evolution (Postgres, cred "admin evo")  ──►  n8n  ──►  Supabase (rad
 
 ## Arquivos
 
-| Arquivo                            | O que é                                                                |
-| ---------------------------------- | ----------------------------------------------------------------------- |
-| `schema.sql`                     | Tabelas`radar_pe_*` + funções RPC (rodar no SQL Editor do Supabase) |
-| `n8n/01_backfill_instancia.json` | Sub: captura o histórico completo de UMA instância                    |
-| `n8n/02_backfill_main.json`      | Main: disparo manual → lista instâncias → chama 01                   |
-| `n8n/03_diario_instancia.json`   | Sub: captura incremental (só mensagens novas) de UMA instância        |
-| `n8n/04_diario_main.json`        | Main: cron diário → lista instâncias → chama 03                     |
-| `n8n/05_health.json`             | Cron diário: checa`connectionState` e marca sessões offline         |
-| `queries_validacao.md`           | Queries pra conferir o resultado do backfill                            |
+| Arquivo | O que é |
+| --- | --- |
+| `schema.sql` | Tabelas `radar_pe_*` + funções RPC (rodar no SQL Editor do Supabase) |
+| `n8n/01_backfill_instancia.json` | Sub: captura o histórico completo de UMA instância |
+| `n8n/02_backfill_main.json` | Main: disparo manual → lista instâncias → chama 01 |
+| `n8n/03_diario_instancia.json` | Sub: captura incremental (só mensagens novas) de UMA instância |
+| `n8n/04_diario_main.json` | Main: cron diário → lista instâncias → chama 03 |
+| `n8n/05_health.json` | Cron diário: checa `connectionState` e marca sessões offline |
+| `queries_validacao.md` | Queries pra conferir o resultado do backfill |
 
 ## Workflows
 
@@ -68,14 +68,29 @@ Evolution (Postgres, cred "admin evo")  ──►  n8n  ──►  Supabase (rad
 - **`radar_pe_chats`** — um por contato/conversa (`instance_name`, `remote_jid`, `contact_name`, `transcript`, `checkpoint`, ...). Único por `(instance_name, remote_jid)`.
 - **`radar_pe_contacts`** — registro de negócio ("todos os contatos"), com os campos da Botando pra Moer.
 
+### Por que o `radar_pe_chats` existe?
+
+As mensagens cruas já vivem no banco da Evolution — o `radar_pe_chats` **não é uma cópia**, é uma camada derivada que guarda duas coisas que a Evolution não fornece:
+
+1. **`transcript`** — texto renderizado ("Eu:"/"Contato:", `[áudio]`, `[imagem]`...). É uma transformação nossa do `message` (jsonb), pronta pro critério (Etapa 2) ler sem re-fazer o `CASE` a cada rodada.
+2. **`checkpoint`** — cursor de sincronização ("até qual mensagem já processamos"). Estado nosso; a Evolution não guarda isso.
+
+Três motivos pra mantê-lo:
+
+- **Cursor incremental** — sem o checkpoint, o diário releria todo o histórico diariamente.
+- **Critério desacoplado** — a Etapa 2 lê texto limpo, sem acoplar ao schema da Evolution.
+- **Hedge de retention** — se a Evolution limpar/apagar mensagens antigas (ou uma sessão for deletada), o transcript é onde o contexto completo sobrevive.
+
+Em resumo: **Evolution** = fonte da verdade · **`radar_pe_chats`** = cópia de trabalho (transcript + checkpoint) · **`radar_pe_contacts`** = registro de negócio (o que a equipe consulta/edita).
+
 ## Mapeamento Botando pra Moer → `radar_pe_contacts`
 
-| Campo                                            | Automatizável      |
-| ------------------------------------------------ | ------------------- |
-| Nome / Telefone / Contato inicial / Sessão      | automático         |
-| Comunidade / Município                          | cruzamento (futuro) |
-| Temperatura / Teor / Responsável / Observação | humano (IA depois)  |
-| Status / Encaminhamento /`sent_to_radar`       | critério (Etapa 2) |
+| Campo | Automatizável |
+| --- | --- |
+| Nome / Telefone / Contato inicial / Sessão | automático |
+| Comunidade / Município | cruzamento (futuro) |
+| Temperatura / Teor / Responsável / Observação | humano (IA depois) |
+| Status / Encaminhamento / `sent_to_radar` | critério (Etapa 2) |
 
 ## Setup
 
