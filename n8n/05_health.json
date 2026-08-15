@@ -116,7 +116,13 @@
             }
           ]
         },
-        "options": {},
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ p_name: $json.name, p_connection_state: $json.state }) }}"
