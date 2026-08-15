@@ -1,0 +1,140 @@
+{
+  "name": "02 - Backfill (main)",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "cbfb6647-573a-4383-915f-9e699f778aae",
+      "name": "Manual Trigger"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://database.tnledu.shop/rest/v1/rpc/radar_pe_list_instances",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": false,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        200,
+        0
+      ],
+      "id": "0c92a68c-40a1-4af2-a497-e190136daebc",
+      "name": "Get Instances",
+      "credentials": {
+        "supabaseApi": {
+          "id": "2s75u9F7plz4ovFN",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {},
+        "batchSize": 1
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        400,
+        0
+      ],
+      "id": "111b4fff-fa45-4e6d-bd3d-3643eb9e88c3",
+      "name": "Loop Instances"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "SELECIONE_O_WORKFLOW_BACKFILL_INSTANCIA",
+          "mode": "list",
+          "cachedResultName": "01 - Backfill Instância"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "instance_name": "={{ $json.name }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "instance_name",
+              "displayName": "instance_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        600,
+        0
+      ],
+      "id": "e64900ef-a1d9-403a-b1c4-8141325b4449",
+      "name": "Execute Instância"
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Instances",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Instances": {
+      "main": [
+        [
+          {
+            "node": "Loop Instances",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Instances": {
+      "main": [
+        [
+          {
+            "node": "Execute Instância",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {},
+  "pinData": {}
+}

@@ -1,0 +1,234 @@
+{
+  "name": "03 - Diário Instância",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "8c4616f0-e5f1-4fcd-a42f-9178a9dac9dc",
+      "name": "Trigger"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://evolution.tnledu.shop/chat/findChats/{{ encodeURIComponent($json.instance_name) }}",
+        "options": {},
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        200,
+        0
+      ],
+      "id": "a32fd73e-21f2-4413-87d5-ad7c3abdc884",
+      "name": "Find Chats"
+    },
+    {
+      "parameters": {
+        "options": {},
+        "batchSize": 1
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        400,
+        0
+      ],
+      "id": "a4c75cb3-d2d4-4b46-a6f4-dc05226e511f",
+      "name": "Loop Chats"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://database.tnledu.shop/rest/v1/rpc/radar_pe_get_chat",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "options": {},
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_instance_name: $('Trigger').item.json.instance_name, p_remote_jid: $('Loop Chats').item.json.id }) }}"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        600,
+        0
+      ],
+      "id": "630eb4d2-786c-4220-bfad-6f50f8396434",
+      "name": "Get Existing",
+      "credentials": {
+        "supabaseApi": {
+          "id": "2s75u9F7plz4ovFN",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://evolution.tnledu.shop/chat/findMessages/{{ encodeURIComponent($('Trigger').item.json.instance_name) }}",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "remoteJid",
+              "value": "={{ $('Loop Chats').item.json.id }}"
+            },
+            {
+              "name": "page",
+              "value": "1"
+            },
+            {
+              "name": "offset",
+              "value": "300"
+            }
+          ]
+        },
+        "options": {},
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        800,
+        0
+      ],
+      "id": "ce69731f-de26-4d82-bc21-ca1fb21900cc",
+      "name": "Find Messages"
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.all();\n\nlet msgs;\nif (raw.length === 1 && Array.isArray(raw[0].json.messages)) {\n  msgs = raw[0].json.messages;\n} else {\n  msgs = raw.map((i) => i.json);\n}\n\nconst existingItem = $('Get Existing').item.json || {};\nconst prevTranscript = existingItem.transcript || '';\nconst prevTs = existingItem.checkpoint\n  ? Math.floor(new Date(existingItem.checkpoint).getTime() / 1000)\n  : 0;\n\nconst rows = msgs\n  .map((m) => {\n    const msg = m.message || {};\n    const body =\n      msg.conversation ||\n      (msg.extendedTextMessage && msg.extendedTextMessage.text) ||\n      (msg.imageMessage && msg.imageMessage.caption) ||\n      (msg.videoMessage && msg.videoMessage.caption) ||\n      (msg.documentMessage && msg.documentMessage.caption) ||\n      (msg.audioMessage ? '[audio]' : '') ||\n      (msg.stickerMessage ? '[figurinha]' : '') ||\n      (msg.locationMessage ? '[localizacao]' : '') ||\n      '';\n    const ts = Number(m.messageTimestamp);\n    return { ts: isFinite(ts) ? ts : 0, fromMe: !!(m.key && m.key.fromMe), body };\n  })\n  .filter((r) => r.body && r.ts > prevTs)\n  .sort((a, b) => a.ts - b.ts);\n\nif (rows.length === 0) {\n  return [];\n}\n\nconst newText = rows.map((r) => (r.fromMe ? 'Eu' : 'Contato') + ': ' + r.body).join('\\n');\nconst merged = prevTranscript ? prevTranscript + '\\n' + newText : newText;\nconst toIso = (ts) => new Date(ts * 1000).toISOString();\nconst lastTs = rows[rows.length - 1].ts;\n\nreturn [\n  {\n    json: {\n      transcript: merged,\n      first_message_at: null,\n      last_message_at: toIso(lastTs),\n      checkpoint: toIso(lastTs),\n    },\n  },\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        0
+      ],
+      "id": "51073fa0-1642-4eac-a624-ce2d2ff1222c",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://database.tnledu.shop/rest/v1/rpc/radar_pe_upsert_chat",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "options": {},
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_instance_name: $('Trigger').item.json.instance_name, p_remote_jid: $('Loop Chats').item.json.id, p_contact_name: $('Loop Chats').item.json.name, p_phone: $('Loop Chats').item.json.id.replace('@s.whatsapp.net',''), p_first_message_at: $json.first_message_at, p_last_message_at: $json.last_message_at, p_checkpoint: $json.checkpoint, p_transcript: $json.transcript }) }}"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1200,
+        0
+      ],
+      "id": "a8005cbb-6e80-4210-96c0-c36d75d3b3e0",
+      "name": "Upsert Chat",
+      "credentials": {
+        "supabaseApi": {
+          "id": "2s75u9F7plz4ovFN",
+          "name": "Supabase account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Trigger": {
+      "main": [
+        [
+          {
+            "node": "Find Chats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Chats": {
+      "main": [
+        [
+          {
+            "node": "Loop Chats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Chats": {
+      "main": [
+        [
+          {
+            "node": "Get Existing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Existing": {
+      "main": [
+        [
+          {
+            "node": "Find Messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Messages": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Upsert Chat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {},
+  "pinData": {}
+}

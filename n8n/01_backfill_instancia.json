@@ -1,0 +1,201 @@
+{
+  "name": "01 - Backfill Instância",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "a7becc63-5125-4671-81a6-4278b51e0e62",
+      "name": "Trigger"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://evolution.tnledu.shop/chat/findChats/{{ encodeURIComponent($json.instance_name) }}",
+        "options": {},
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        200,
+        0
+      ],
+      "id": "c4b50cbd-5233-49f0-b443-ea4cf82ef721",
+      "name": "Find Chats"
+    },
+    {
+      "parameters": {
+        "options": {},
+        "batchSize": 1
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        400,
+        0
+      ],
+      "id": "d58d8115-1f4d-49eb-9048-b6b701de6ddb",
+      "name": "Loop Chats"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://evolution.tnledu.shop/chat/findMessages/{{ encodeURIComponent($('Trigger').item.json.instance_name) }}",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "remoteJid",
+              "value": "={{ $('Loop Chats').item.json.id }}"
+            },
+            {
+              "name": "offset",
+              "value": "100"
+            }
+          ]
+        },
+        "options": {
+          "pagination": {
+            "paginationMode": "updateAParameterInEachRequest",
+            "paginationCompleteWhen": "responseIsEmpty",
+            "parameters": {
+              "parameters": [
+                {
+                  "type": "qs",
+                  "name": "page",
+                  "value": "={{ $pageIndex + 1 }}"
+                }
+              ]
+            },
+            "limitPagesFetched": true,
+            "maxRequests": 200,
+            "requestInterval": 300
+          }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        600,
+        0
+      ],
+      "id": "906caff5-e410-4983-a8a0-4b0b36a4b991",
+      "name": "Find Messages"
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.all();\n\nlet msgs;\nif (raw.length === 1 && Array.isArray(raw[0].json.messages)) {\n  msgs = raw[0].json.messages;\n} else {\n  msgs = raw.map((i) => i.json);\n}\n\nconst seen = new Set();\nconst rows = msgs\n  .map((m) => {\n    const msg = m.message || {};\n    const body =\n      msg.conversation ||\n      (msg.extendedTextMessage && msg.extendedTextMessage.text) ||\n      (msg.imageMessage && msg.imageMessage.caption) ||\n      (msg.videoMessage && msg.videoMessage.caption) ||\n      (msg.documentMessage && msg.documentMessage.caption) ||\n      (msg.contactMessage && msg.contactMessage.displayName) ||\n      (msg.audioMessage ? '[audio]' : '') ||\n      (msg.stickerMessage ? '[figurinha]' : '') ||\n      (msg.locationMessage ? '[localizacao]' : '') ||\n      '';\n    const ts = Number(m.messageTimestamp);\n    const mid = (m.key && m.key.id) || ((m.key && m.key.remoteJid) + '_' + ts);\n    return { ts: isFinite(ts) ? ts : 0, fromMe: !!(m.key && m.key.fromMe), body, mid };\n  })\n  .filter((r) => r.body && r.ts > 0 && !seen.has(r.mid) && (seen.add(r.mid), true))\n  .sort((a, b) => a.ts - b.ts);\n\nconst transcript = rows\n  .map((r) => (r.fromMe ? 'Eu' : 'Contato') + ': ' + r.body)\n  .join('\\n');\n\nconst toIso = (ts) => (ts ? new Date(ts * 1000).toISOString() : null);\n\nreturn [\n  {\n    json: {\n      transcript,\n      first_message_at: toIso(rows.length ? rows[0].ts : null),\n      last_message_at: toIso(rows.length ? rows[rows.length - 1].ts : null),\n      checkpoint: toIso(rows.length ? rows[rows.length - 1].ts : null),\n    },\n  },\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        0
+      ],
+      "id": "d214149f-81c6-4b37-9306-600b36bac0ed",
+      "name": "Build Transcript"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://database.tnledu.shop/rest/v1/rpc/radar_pe_upsert_chat",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "options": {},
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_instance_name: $('Trigger').item.json.instance_name, p_remote_jid: $('Loop Chats').item.json.id, p_contact_name: $('Loop Chats').item.json.name, p_phone: $('Loop Chats').item.json.id.replace('@s.whatsapp.net',''), p_first_message_at: $json.first_message_at, p_last_message_at: $json.last_message_at, p_checkpoint: $json.checkpoint, p_transcript: $json.transcript }) }}"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1000,
+        0
+      ],
+      "id": "613f3c19-fa48-4e9b-9583-8f9a416bcff5",
+      "name": "Upsert Chat",
+      "credentials": {
+        "supabaseApi": {
+          "id": "2s75u9F7plz4ovFN",
+          "name": "Supabase account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Trigger": {
+      "main": [
+        [
+          {
+            "node": "Find Chats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Chats": {
+      "main": [
+        [
+          {
+            "node": "Loop Chats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Chats": {
+      "main": [
+        [
+          {
+            "node": "Find Messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Messages": {
+      "main": [
+        [
+          {
+            "node": "Build Transcript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Transcript": {
+      "main": [
+        [
+          {
+            "node": "Upsert Chat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {},
+  "pinData": {}
+}

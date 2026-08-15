@@ -1,0 +1,196 @@
+{
+  "name": "05 - Health",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "0fcd08e8-bca7-412f-908d-c2c2cb5cc1c6",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://database.tnledu.shop/rest/v1/rpc/radar_pe_list_instances",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": false,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        200,
+        0
+      ],
+      "id": "9ac728c4-108c-4e00-b239-a9174fbc0872",
+      "name": "Get Instances",
+      "credentials": {
+        "supabaseApi": {
+          "id": "2s75u9F7plz4ovFN",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {},
+        "batchSize": 1
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        400,
+        0
+      ],
+      "id": "2efc1bbc-a47e-4eb2-a35c-ccae6b7f1a82",
+      "name": "Loop Instances"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://evolution.tnledu.shop/instance/connectionState/{{ encodeURIComponent($json.name) }}",
+        "options": {},
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        600,
+        0
+      ],
+      "id": "ecf11bca-284c-42a6-a115-0a4623f8c0fe",
+      "name": "Connection State"
+    },
+    {
+      "parameters": {
+        "jsCode": "const j = $input.first().json || {};\nconst state =\n  j.state ||\n  (j.instance && j.instance.state) ||\n  (j.instance && j.instance.connectionStatus && j.instance.connectionStatus.state) ||\n  'unknown';\nreturn [{ json: { name: $('Loop Instances').item.json.name, state } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        0
+      ],
+      "id": "18e9a7dc-a472-43ed-b034-06fb3df1cf93",
+      "name": "Extract State"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://database.tnledu.shop/rest/v1/rpc/radar_pe_mark_instance_health",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "options": {},
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_name: $json.name, p_connection_state: $json.state }) }}"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1000,
+        0
+      ],
+      "id": "befb983e-eeb5-4067-868e-06d9ee48b7bf",
+      "name": "Mark Health",
+      "credentials": {
+        "supabaseApi": {
+          "id": "2s75u9F7plz4ovFN",
+          "name": "Supabase account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Instances",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Instances": {
+      "main": [
+        [
+          {
+            "node": "Loop Instances",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Instances": {
+      "main": [
+        [
+          {
+            "node": "Connection State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Connection State": {
+      "main": [
+        [
+          {
+            "node": "Extract State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract State": {
+      "main": [
+        [
+          {
+            "node": "Mark Health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {},
+  "pinData": {}
+}
