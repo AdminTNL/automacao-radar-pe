@@ -9,98 +9,70 @@
         0,
         0
       ],
-      "id": "a7becc63-5125-4671-81a6-4278b51e0e62",
+      "id": "efa87ef4-b15e-4137-9df5-32a8706c68d0",
       "name": "Trigger"
     },
     {
       "parameters": {
-        "method": "GET",
-        "url": "https://evolution.tnledu.shop/chat/findChats/{{ encodeURIComponent($json.instance_name) }}",
-        "options": {},
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth"
+        "resource": "database",
+        "operation": "executeQuery",
+        "query": "SELECT DISTINCT ON (m.key->>'remoteJid')\n  m.key->>'remoteJid' AS remote_jid,\n  COALESCE(c.\"pushName\", m.\"pushName\") AS push_name,\n  m.\"messageTimestamp\" AS last_message_ts\nFROM \"Message\" m\nJOIN \"Instance\" i ON i.\"id\" = m.\"instanceId\"\nLEFT JOIN \"Contact\" c ON c.\"remoteJid\" = m.key->>'remoteJid' AND c.\"instanceId\" = m.\"instanceId\"\nWHERE i.\"name\" = $1\n  AND (m.key->>'remoteJid' LIKE '%@s.whatsapp.net' OR m.key->>'remoteJid' LIKE '%@lid')\nORDER BY m.key->>'remoteJid', m.\"messageTimestamp\" DESC;",
+        "options": {
+          "queryReplacement": "={{ $('Trigger').first().json.instance_name }}"
+        }
       },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.3,
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
       "position": [
-        200,
+        220,
         0
       ],
-      "id": "c4b50cbd-5233-49f0-b443-ea4cf82ef721",
+      "id": "094d392f-138f-4bb0-ac54-46aaa53c0bd1",
       "name": "Find Chats"
     },
     {
       "parameters": {
-        "options": {},
-        "batchSize": 1
+        "batchSize": 1,
+        "options": {}
       },
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        400,
+        440,
         0
       ],
-      "id": "d58d8115-1f4d-49eb-9048-b6b701de6ddb",
+      "id": "c18a0e94-d517-43e8-ac95-86aecf73b8d5",
       "name": "Loop Chats"
     },
     {
       "parameters": {
-        "method": "GET",
-        "url": "https://evolution.tnledu.shop/chat/findMessages/{{ encodeURIComponent($('Trigger').item.json.instance_name) }}",
-        "sendQuery": true,
-        "queryParameters": {
-          "parameters": [
-            {
-              "name": "remoteJid",
-              "value": "={{ $('Loop Chats').item.json.id }}"
-            },
-            {
-              "name": "offset",
-              "value": "100"
-            }
-          ]
-        },
+        "resource": "database",
+        "operation": "executeQuery",
+        "query": "SELECT\n  (m.key->>'fromMe')::boolean AS from_me,\n  m.key->>'id' AS msg_id,\n  m.\"messageTimestamp\" AS ts,\n  CASE\n    WHEN m.message ? 'audioMessage'    THEN '[audio]'\n    WHEN m.message ? 'imageMessage'    THEN COALESCE(m.message->'imageMessage'->>'caption', '[imagem]')\n    WHEN m.message ? 'videoMessage'    THEN COALESCE(m.message->'videoMessage'->>'caption', '[video]')\n    WHEN m.message ? 'stickerMessage'  THEN '[figurinha]'\n    WHEN m.message ? 'documentMessage' THEN COALESCE(m.message->'documentMessage'->>'caption', '[documento]')\n    WHEN m.message ? 'locationMessage' THEN '[localizacao]'\n    WHEN m.message ? 'reactionMessage' THEN '[reacao]'\n    WHEN m.message ? 'contactMessage'  THEN COALESCE(m.message->'contactMessage'->>'displayName', '[contato]')\n    ELSE COALESCE(\n      m.message->>'conversation',\n      m.message->'extendedTextMessage'->>'text',\n      m.message->'templateMessage'->'hydratedTemplate'->>'hydratedContentText',\n      m.message->'templateMessage'->'hydratedTemplate'->>'title'\n    )\n  END AS body\nFROM \"Message\" m\nJOIN \"Instance\" i ON i.\"id\" = m.\"instanceId\"\nWHERE i.\"name\" = $1 AND m.key->>'remoteJid' = $2\nORDER BY m.\"messageTimestamp\" ASC\nLIMIT 10000;",
         "options": {
-          "pagination": {
-            "paginationMode": "updateAParameterInEachRequest",
-            "paginationCompleteWhen": "responseIsEmpty",
-            "parameters": {
-              "parameters": [
-                {
-                  "type": "qs",
-                  "name": "page",
-                  "value": "={{ $pageIndex + 1 }}"
-                }
-              ]
-            },
-            "limitPagesFetched": true,
-            "maxRequests": 200,
-            "requestInterval": 300
-          }
-        },
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth"
+          "queryReplacement": "={{ $('Trigger').first().json.instance_name }},{{ $('Loop Chats').item.json.remote_jid }}"
+        }
       },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.3,
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
       "position": [
-        600,
+        660,
         0
       ],
-      "id": "906caff5-e410-4983-a8a0-4b0b36a4b991",
+      "id": "949cf02e-8574-4136-8b44-34cad7b2b3fb",
       "name": "Find Messages"
     },
     {
       "parameters": {
-        "jsCode": "const raw = $input.all();\n\nlet msgs;\nif (raw.length === 1 && Array.isArray(raw[0].json.messages)) {\n  msgs = raw[0].json.messages;\n} else {\n  msgs = raw.map((i) => i.json);\n}\n\nconst seen = new Set();\nconst rows = msgs\n  .map((m) => {\n    const msg = m.message || {};\n    const body =\n      msg.conversation ||\n      (msg.extendedTextMessage && msg.extendedTextMessage.text) ||\n      (msg.imageMessage && msg.imageMessage.caption) ||\n      (msg.videoMessage && msg.videoMessage.caption) ||\n      (msg.documentMessage && msg.documentMessage.caption) ||\n      (msg.contactMessage && msg.contactMessage.displayName) ||\n      (msg.audioMessage ? '[audio]' : '') ||\n      (msg.stickerMessage ? '[figurinha]' : '') ||\n      (msg.locationMessage ? '[localizacao]' : '') ||\n      '';\n    const ts = Number(m.messageTimestamp);\n    const mid = (m.key && m.key.id) || ((m.key && m.key.remoteJid) + '_' + ts);\n    return { ts: isFinite(ts) ? ts : 0, fromMe: !!(m.key && m.key.fromMe), body, mid };\n  })\n  .filter((r) => r.body && r.ts > 0 && !seen.has(r.mid) && (seen.add(r.mid), true))\n  .sort((a, b) => a.ts - b.ts);\n\nconst transcript = rows\n  .map((r) => (r.fromMe ? 'Eu' : 'Contato') + ': ' + r.body)\n  .join('\\n');\n\nconst toIso = (ts) => (ts ? new Date(ts * 1000).toISOString() : null);\n\nreturn [\n  {\n    json: {\n      transcript,\n      first_message_at: toIso(rows.length ? rows[0].ts : null),\n      last_message_at: toIso(rows.length ? rows[rows.length - 1].ts : null),\n      checkpoint: toIso(rows.length ? rows[rows.length - 1].ts : null),\n    },\n  },\n];"
+        "jsCode": "const chat = $('Loop Chats').item.json || {};\nconst inst = $('Trigger').first().json.instance_name || '';\nconst remoteJid = chat.remote_jid || '';\n\nconst all = $input.all().map((i) => i.json);\nconst textRows = all.filter((r) => r.body);\nconst first = all.length ? all[0].ts : null;\nconst last = all.length ? all[all.length - 1].ts : null;\nconst toIso = (ts) => (ts ? new Date(ts * 1000).toISOString() : null);\n\nconst transcript = textRows.map((r) => (r.from_me ? 'Eu' : 'Contato') + ': ' + r.body).join('\\n');\n\nreturn [{\n  json: {\n    instance_name: inst,\n    remote_jid: remoteJid,\n    contact_name: chat.push_name || null,\n    phone: remoteJid ? remoteJid.replace('@s.whatsapp.net', '') : null,\n    transcript,\n    first_message_at: toIso(first),\n    last_message_at: toIso(last),\n    checkpoint: toIso(last),\n  },\n}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        800,
+        880,
         0
       ],
-      "id": "d214149f-81c6-4b37-9306-600b36bac0ed",
+      "id": "9de348ae-1de9-4be7-ae1b-89f8a4c9d497",
       "name": "Build Transcript"
     },
     {
@@ -121,15 +93,15 @@
         "sendBody": true,
         "options": {},
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ p_instance_name: $('Trigger').item.json.instance_name, p_remote_jid: $('Loop Chats').item.json.id, p_contact_name: $('Loop Chats').item.json.name, p_phone: $('Loop Chats').item.json.id.replace('@s.whatsapp.net',''), p_first_message_at: $json.first_message_at, p_last_message_at: $json.last_message_at, p_checkpoint: $json.checkpoint, p_transcript: $json.transcript }) }}"
+        "jsonBody": "={{ JSON.stringify({ p_instance_name: $json.instance_name, p_remote_jid: $json.remote_jid, p_contact_name: $json.contact_name, p_phone: $json.phone, p_first_message_at: $json.first_message_at, p_last_message_at: $json.last_message_at, p_checkpoint: $json.checkpoint, p_transcript: $json.transcript }) }}"
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        1000,
+        1100,
         0
       ],
-      "id": "613f3c19-fa48-4e9b-9583-8f9a416bcff5",
+      "id": "39cc2265-b8ae-4c7d-ba48-5d32f46cad7b",
       "name": "Upsert Chat",
       "credentials": {
         "supabaseApi": {
@@ -164,6 +136,7 @@
     },
     "Loop Chats": {
       "main": [
+        [],
         [
           {
             "node": "Find Messages",
@@ -189,6 +162,17 @@
         [
           {
             "node": "Upsert Chat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Chat": {
+      "main": [
+        [
+          {
+            "node": "Loop Chats",
             "type": "main",
             "index": 0
           }

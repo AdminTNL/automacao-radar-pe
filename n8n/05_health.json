@@ -18,7 +18,7 @@
         0,
         0
       ],
-      "id": "0fcd08e8-bca7-412f-908d-c2c2cb5cc1c6",
+      "id": "2a4911ec-2b42-4054-b1a4-24a17a5e18dd",
       "name": "Schedule Trigger"
     },
     {
@@ -42,10 +42,10 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        200,
+        220,
         0
       ],
-      "id": "9ac728c4-108c-4e00-b239-a9174fbc0872",
+      "id": "350b1552-6777-4dfe-9dfc-351314460924",
       "name": "Get Instances",
       "credentials": {
         "supabaseApi": {
@@ -56,33 +56,31 @@
     },
     {
       "parameters": {
-        "options": {},
-        "batchSize": 1
+        "batchSize": 1,
+        "options": {}
       },
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        400,
+        440,
         0
       ],
-      "id": "2efc1bbc-a47e-4eb2-a35c-ccae6b7f1a82",
+      "id": "357e33d9-1917-43b8-bda9-6a71a03e761a",
       "name": "Loop Instances"
     },
     {
       "parameters": {
         "method": "GET",
-        "url": "https://evolution.tnledu.shop/instance/connectionState/{{ encodeURIComponent($json.name) }}",
-        "options": {},
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth"
+        "url": "https://evolution.tnledu.shop/instance/connectionState/{{ encodeURIComponent($('Loop Instances').item.json.name) }}",
+        "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        600,
+        660,
         0
       ],
-      "id": "ecf11bca-284c-42a6-a115-0a4623f8c0fe",
+      "id": "74e6239e-653e-42f5-918d-24cf031d5ecc",
       "name": "Connection State"
     },
     {
@@ -92,10 +90,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        800,
+        880,
         0
       ],
-      "id": "18e9a7dc-a472-43ed-b034-06fb3df1cf93",
+      "id": "c2f3a14f-3727-43d5-85ab-286e37d0ce7c",
       "name": "Extract State"
     },
     {
@@ -121,10 +119,10 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        1000,
+        1100,
         0
       ],
-      "id": "befb983e-eeb5-4067-868e-06d9ee48b7bf",
+      "id": "3575ee88-f678-4454-be47-a254f0107bd9",
       "name": "Mark Health",
       "credentials": {
         "supabaseApi": {
@@ -159,6 +157,7 @@
     },
     "Loop Instances": {
       "main": [
+        [],
         [
           {
             "node": "Connection State",
@@ -184,6 +183,17 @@
         [
           {
             "node": "Mark Health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Health": {
+      "main": [
+        [
+          {
+            "node": "Loop Instances",
             "type": "main",
             "index": 0
           }

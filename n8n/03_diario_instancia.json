@@ -9,38 +9,39 @@
         0,
         0
       ],
-      "id": "8c4616f0-e5f1-4fcd-a42f-9178a9dac9dc",
+      "id": "6b1a01fb-0f1c-4d88-af92-0cb19ebd6628",
       "name": "Trigger"
     },
     {
       "parameters": {
-        "method": "GET",
-        "url": "https://evolution.tnledu.shop/chat/findChats/{{ encodeURIComponent($json.instance_name) }}",
-        "options": {},
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth"
+        "resource": "database",
+        "operation": "executeQuery",
+        "query": "SELECT DISTINCT ON (m.key->>'remoteJid')\n  m.key->>'remoteJid' AS remote_jid,\n  COALESCE(c.\"pushName\", m.\"pushName\") AS push_name,\n  m.\"messageTimestamp\" AS last_message_ts\nFROM \"Message\" m\nJOIN \"Instance\" i ON i.\"id\" = m.\"instanceId\"\nLEFT JOIN \"Contact\" c ON c.\"remoteJid\" = m.key->>'remoteJid' AND c.\"instanceId\" = m.\"instanceId\"\nWHERE i.\"name\" = $1\n  AND (m.key->>'remoteJid' LIKE '%@s.whatsapp.net' OR m.key->>'remoteJid' LIKE '%@lid')\nORDER BY m.key->>'remoteJid', m.\"messageTimestamp\" DESC;",
+        "options": {
+          "queryReplacement": "={{ $('Trigger').first().json.instance_name }}"
+        }
       },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.3,
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
       "position": [
-        200,
+        220,
         0
       ],
-      "id": "a32fd73e-21f2-4413-87d5-ad7c3abdc884",
+      "id": "dddef48e-1cc4-4669-9176-e089dbad5141",
       "name": "Find Chats"
     },
     {
       "parameters": {
-        "options": {},
-        "batchSize": 1
+        "batchSize": 1,
+        "options": {}
       },
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        400,
+        440,
         0
       ],
-      "id": "a4c75cb3-d2d4-4b46-a6f4-dc05226e511f",
+      "id": "b62e1bd8-b4c7-4729-a78f-67b485513e91",
       "name": "Loop Chats"
     },
     {
@@ -61,15 +62,15 @@
         "sendBody": true,
         "options": {},
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ p_instance_name: $('Trigger').item.json.instance_name, p_remote_jid: $('Loop Chats').item.json.id }) }}"
+        "jsonBody": "={{ JSON.stringify({ p_instance_name: $('Trigger').first().json.instance_name, p_remote_jid: $('Loop Chats').item.json.remote_jid }) }}"
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        600,
+        660,
         0
       ],
-      "id": "630eb4d2-786c-4220-bfad-6f50f8396434",
+      "id": "ecc9863a-acc8-4f2d-baa9-56156b6f3634",
       "name": "Get Existing",
       "credentials": {
         "supabaseApi": {
@@ -80,49 +81,33 @@
     },
     {
       "parameters": {
-        "method": "GET",
-        "url": "https://evolution.tnledu.shop/chat/findMessages/{{ encodeURIComponent($('Trigger').item.json.instance_name) }}",
-        "sendQuery": true,
-        "queryParameters": {
-          "parameters": [
-            {
-              "name": "remoteJid",
-              "value": "={{ $('Loop Chats').item.json.id }}"
-            },
-            {
-              "name": "page",
-              "value": "1"
-            },
-            {
-              "name": "offset",
-              "value": "300"
-            }
-          ]
-        },
-        "options": {},
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth"
+        "resource": "database",
+        "operation": "executeQuery",
+        "query": "SELECT\n  (m.key->>'fromMe')::boolean AS from_me,\n  m.key->>'id' AS msg_id,\n  m.\"messageTimestamp\" AS ts,\n  CASE\n    WHEN m.message ? 'audioMessage'    THEN '[audio]'\n    WHEN m.message ? 'imageMessage'    THEN COALESCE(m.message->'imageMessage'->>'caption', '[imagem]')\n    WHEN m.message ? 'videoMessage'    THEN COALESCE(m.message->'videoMessage'->>'caption', '[video]')\n    WHEN m.message ? 'stickerMessage'  THEN '[figurinha]'\n    WHEN m.message ? 'documentMessage' THEN COALESCE(m.message->'documentMessage'->>'caption', '[documento]')\n    WHEN m.message ? 'locationMessage' THEN '[localizacao]'\n    WHEN m.message ? 'reactionMessage' THEN '[reacao]'\n    WHEN m.message ? 'contactMessage'  THEN COALESCE(m.message->'contactMessage'->>'displayName', '[contato]')\n    ELSE COALESCE(\n      m.message->>'conversation',\n      m.message->'extendedTextMessage'->>'text',\n      m.message->'templateMessage'->'hydratedTemplate'->>'hydratedContentText',\n      m.message->'templateMessage'->'hydratedTemplate'->>'title'\n    )\n  END AS body\nFROM \"Message\" m\nJOIN \"Instance\" i ON i.\"id\" = m.\"instanceId\"\nWHERE i.\"name\" = $1 AND m.key->>'remoteJid' = $2 AND m.\"messageTimestamp\" > $3\nORDER BY m.\"messageTimestamp\" ASC\nLIMIT 10000;",
+        "options": {
+          "queryReplacement": "={{ $('Trigger').first().json.instance_name }},{{ $('Loop Chats').item.json.remote_jid }},{{ $('Get Existing').item.json.checkpoint ? Math.floor(new Date($('Get Existing').item.json.checkpoint).getTime() / 1000) : 0 }}"
+        }
       },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.3,
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
       "position": [
-        800,
+        880,
         0
       ],
-      "id": "ce69731f-de26-4d82-bc21-ca1fb21900cc",
+      "id": "0b466fe0-fe4f-4f51-b6f7-e84b84ca2765",
       "name": "Find Messages"
     },
     {
       "parameters": {
-        "jsCode": "const raw = $input.all();\n\nlet msgs;\nif (raw.length === 1 && Array.isArray(raw[0].json.messages)) {\n  msgs = raw[0].json.messages;\n} else {\n  msgs = raw.map((i) => i.json);\n}\n\nconst existingItem = $('Get Existing').item.json || {};\nconst prevTranscript = existingItem.transcript || '';\nconst prevTs = existingItem.checkpoint\n  ? Math.floor(new Date(existingItem.checkpoint).getTime() / 1000)\n  : 0;\n\nconst rows = msgs\n  .map((m) => {\n    const msg = m.message || {};\n    const body =\n      msg.conversation ||\n      (msg.extendedTextMessage && msg.extendedTextMessage.text) ||\n      (msg.imageMessage && msg.imageMessage.caption) ||\n      (msg.videoMessage && msg.videoMessage.caption) ||\n      (msg.documentMessage && msg.documentMessage.caption) ||\n      (msg.audioMessage ? '[audio]' : '') ||\n      (msg.stickerMessage ? '[figurinha]' : '') ||\n      (msg.locationMessage ? '[localizacao]' : '') ||\n      '';\n    const ts = Number(m.messageTimestamp);\n    return { ts: isFinite(ts) ? ts : 0, fromMe: !!(m.key && m.key.fromMe), body };\n  })\n  .filter((r) => r.body && r.ts > prevTs)\n  .sort((a, b) => a.ts - b.ts);\n\nif (rows.length === 0) {\n  return [];\n}\n\nconst newText = rows.map((r) => (r.fromMe ? 'Eu' : 'Contato') + ': ' + r.body).join('\\n');\nconst merged = prevTranscript ? prevTranscript + '\\n' + newText : newText;\nconst toIso = (ts) => new Date(ts * 1000).toISOString();\nconst lastTs = rows[rows.length - 1].ts;\n\nreturn [\n  {\n    json: {\n      transcript: merged,\n      first_message_at: null,\n      last_message_at: toIso(lastTs),\n      checkpoint: toIso(lastTs),\n    },\n  },\n];"
+        "jsCode": "const chat = $('Loop Chats').item.json || {};\nconst inst = $('Trigger').first().json.instance_name || '';\nconst remoteJid = chat.remote_jid || '';\n\nconst existingItem = $('Get Existing').item.json || {};\nconst prevTranscript = existingItem.transcript || '';\n\nconst all = $input.all().map((i) => i.json);\nconst toIso = (ts) => (ts ? new Date(ts * 1000).toISOString() : null);\n\nif (all.length === 0) {\n  return [{ json: {\n    instance_name: inst,\n    remote_jid: remoteJid,\n    contact_name: chat.push_name || null,\n    phone: remoteJid ? remoteJid.replace('@s.whatsapp.net', '') : null,\n    transcript: prevTranscript,\n    first_message_at: null,\n    last_message_at: null,\n    checkpoint: null,\n  } }];\n}\n\nconst lastTs = all[all.length - 1].ts;\nconst textRows = all.filter((r) => r.body);\nlet transcript = prevTranscript;\nif (textRows.length) {\n  const newText = textRows.map((r) => (r.from_me ? 'Eu' : 'Contato') + ': ' + r.body).join('\\n');\n  transcript = prevTranscript ? prevTranscript + '\\n' + newText : newText;\n}\n\nreturn [{ json: {\n  instance_name: inst,\n  remote_jid: remoteJid,\n  contact_name: chat.push_name || null,\n  phone: remoteJid ? remoteJid.replace('@s.whatsapp.net', '') : null,\n  transcript,\n  first_message_at: null,\n  last_message_at: toIso(lastTs),\n  checkpoint: toIso(lastTs),\n} }];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1000,
+        1100,
         0
       ],
-      "id": "51073fa0-1642-4eac-a624-ce2d2ff1222c",
+      "id": "3d6df6d5-c4c2-4a4d-9d55-a5037011e935",
       "name": "Merge"
     },
     {
@@ -143,15 +128,15 @@
         "sendBody": true,
         "options": {},
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ p_instance_name: $('Trigger').item.json.instance_name, p_remote_jid: $('Loop Chats').item.json.id, p_contact_name: $('Loop Chats').item.json.name, p_phone: $('Loop Chats').item.json.id.replace('@s.whatsapp.net',''), p_first_message_at: $json.first_message_at, p_last_message_at: $json.last_message_at, p_checkpoint: $json.checkpoint, p_transcript: $json.transcript }) }}"
+        "jsonBody": "={{ JSON.stringify({ p_instance_name: $json.instance_name, p_remote_jid: $json.remote_jid, p_contact_name: $json.contact_name, p_phone: $json.phone, p_first_message_at: $json.first_message_at, p_last_message_at: $json.last_message_at, p_checkpoint: $json.checkpoint, p_transcript: $json.transcript }) }}"
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        1200,
+        1320,
         0
       ],
-      "id": "a8005cbb-6e80-4210-96c0-c36d75d3b3e0",
+      "id": "8b108d6c-023e-4130-8f87-d2b5fd57126c",
       "name": "Upsert Chat",
       "credentials": {
         "supabaseApi": {
@@ -186,6 +171,7 @@
     },
     "Loop Chats": {
       "main": [
+        [],
         [
           {
             "node": "Get Existing",
@@ -222,6 +208,17 @@
         [
           {
             "node": "Upsert Chat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Chat": {
+      "main": [
+        [
+          {
+            "node": "Loop Chats",
             "type": "main",
             "index": 0
           }
