@@ -9,7 +9,7 @@
         0,
         0
       ],
-      "id": "76197f36-f872-4c96-9910-586285804169",
+      "id": "62df5694-ffd2-51af-9d29-278999a0ac29",
       "name": "Manual Trigger"
     },
     {
@@ -36,7 +36,7 @@
         220,
         0
       ],
-      "id": "8194176f-3f96-40e4-9f9c-fffb15f9a5c2",
+      "id": "1f192efd-23a3-5bc9-9091-2b7095029e68",
       "name": "Get Instances",
       "credentials": {
         "supabaseApi": {
@@ -56,7 +56,7 @@
         440,
         0
       ],
-      "id": "1c219d91-bab9-40b1-a82e-c37f9a182daa",
+      "id": "4eaf374d-e75e-5b81-9072-9c79fef5532c",
       "name": "Loop Instances"
     },
     {
@@ -96,7 +96,7 @@
         660,
         0
       ],
-      "id": "15574eb9-c605-481f-9ece-584146965de7",
+      "id": "1883b793-0e64-541a-b33a-26c43eefc075",
       "name": "Execute Instância"
     }
   ],

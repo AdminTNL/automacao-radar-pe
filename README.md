@@ -92,6 +92,12 @@ Em resumo: **Evolution** = fonte da verdade · **`radar_pe_chats`** = cópia de 
 | Temperatura / Teor / Responsável / Observação | humano (IA depois) |
 | Status / Encaminhamento / `sent_to_radar` | critério (Etapa 2) |
 
+## Limitações conhecidas
+
+- **Race de checkpoint (mesmo segundo):** o diário usa `messageTimestamp > checkpoint`. Se uma mensagem chegar no exato segundo do checkpoint (gravada após a leitura), pode ser pulada. Raríssimo e de baixo impacto.
+- **`@lid` vs `@s.whatsapp.net`:** um mesmo contato pode aparecer em dois formatos de jid, gerando duplicata. Normalizar via `key.remoteJidAlt` se virar problema.
+- **Campos menores:** `phone` de contato `@lid` guarda o lid (não o número); `last_activity_at` ainda não é preenchido; `first_message_at` fica impreciso em conversas com >10k mensagens (daria pra vir de `Contact.createdAt`).
+
 ## Setup
 
 1. Rodar `schema.sql` no Supabase.
@@ -102,6 +108,7 @@ Em resumo: **Evolution** = fonte da verdade · **`radar_pe_chats`** = cópia de 
 ## Roadmap
 
 - [X] Etapa 1 — captação (backfill + diário + health)
+- [ ] Etapa 1 (otimização p/ produção) — diário em bulk por instância + skip de inativos; índice no `findChats`
 - [ ] Etapa 2 — registro em `radar_pe_contacts` + critério (com a Maíra)
 - [ ] Etapa 3 — alimentar Radar Mobiliza PE (Notion)
 - [ ] Calibração (2–3 rodadas) + trocar frase do painel de campo

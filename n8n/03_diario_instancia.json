@@ -9,7 +9,7 @@
         0,
         0
       ],
-      "id": "6b1a01fb-0f1c-4d88-af92-0cb19ebd6628",
+      "id": "c2d1d605-59ef-5b12-b99e-97c2eb2e1bad",
       "name": "Trigger"
     },
     {
@@ -27,7 +27,7 @@
         220,
         0
       ],
-      "id": "dddef48e-1cc4-4669-9176-e089dbad5141",
+      "id": "c0b73f34-f1c3-5fac-8154-3c1ea3f916ad",
       "name": "Find Chats"
     },
     {
@@ -41,7 +41,7 @@
         440,
         0
       ],
-      "id": "b62e1bd8-b4c7-4729-a78f-67b485513e91",
+      "id": "94d80ee6-85b1-5fdc-8d8a-bf0868e2c8c0",
       "name": "Loop Chats"
     },
     {
@@ -70,7 +70,7 @@
         660,
         0
       ],
-      "id": "ecc9863a-acc8-4f2d-baa9-56156b6f3634",
+      "id": "b553d605-1333-59a5-bd8d-2324d420456e",
       "name": "Get Existing",
       "credentials": {
         "supabaseApi": {
@@ -83,7 +83,7 @@
       "parameters": {
         "resource": "database",
         "operation": "executeQuery",
-        "query": "SELECT\n  (m.key->>'fromMe')::boolean AS from_me,\n  m.key->>'id' AS msg_id,\n  m.\"messageTimestamp\" AS ts,\n  CASE\n    WHEN m.message ? 'audioMessage'    THEN '[audio]'\n    WHEN m.message ? 'imageMessage'    THEN COALESCE(m.message->'imageMessage'->>'caption', '[imagem]')\n    WHEN m.message ? 'videoMessage'    THEN COALESCE(m.message->'videoMessage'->>'caption', '[video]')\n    WHEN m.message ? 'stickerMessage'  THEN '[figurinha]'\n    WHEN m.message ? 'documentMessage' THEN COALESCE(m.message->'documentMessage'->>'caption', '[documento]')\n    WHEN m.message ? 'locationMessage' THEN '[localizacao]'\n    WHEN m.message ? 'reactionMessage' THEN '[reacao]'\n    WHEN m.message ? 'contactMessage'  THEN COALESCE(m.message->'contactMessage'->>'displayName', '[contato]')\n    ELSE COALESCE(\n      m.message->>'conversation',\n      m.message->'extendedTextMessage'->>'text',\n      m.message->'templateMessage'->'hydratedTemplate'->>'hydratedContentText',\n      m.message->'templateMessage'->'hydratedTemplate'->>'title'\n    )\n  END AS body\nFROM \"Message\" m\nJOIN \"Instance\" i ON i.\"id\" = m.\"instanceId\"\nWHERE i.\"name\" = $1 AND m.key->>'remoteJid' = $2 AND m.\"messageTimestamp\" > $3\nORDER BY m.\"messageTimestamp\" ASC\nLIMIT 10000;",
+        "query": "SELECT\n  (m.key->>'fromMe')::boolean AS from_me,\n  m.key->>'id' AS msg_id,\n  m.\"messageTimestamp\" AS ts,\n  CASE\n    WHEN m.message ? 'audioMessage'    THEN '[audio]'\n    WHEN m.message ? 'imageMessage'    THEN COALESCE(m.message->'imageMessage'->>'caption', '[imagem]')\n    WHEN m.message ? 'videoMessage'    THEN COALESCE(m.message->'videoMessage'->>'caption', '[video]')\n    WHEN m.message ? 'stickerMessage'  THEN '[figurinha]'\n    WHEN m.message ? 'documentMessage' THEN COALESCE(m.message->'documentMessage'->>'caption', '[documento]')\n    WHEN m.message ? 'locationMessage' THEN '[localizacao]'\n    WHEN m.message ? 'reactionMessage' THEN '[reacao]'\n    WHEN m.message ? 'contactMessage'  THEN COALESCE(m.message->'contactMessage'->>'displayName', '[contato]')\n    ELSE COALESCE(\n      m.message->>'conversation',\n      m.message->'extendedTextMessage'->>'text',\n      m.message->'templateMessage'->'hydratedTemplate'->>'hydratedContentText',\n      m.message->'templateMessage'->'hydratedTemplate'->>'title'\n    )\n  END AS body\nFROM \"Message\" m\nJOIN \"Instance\" i ON i.\"id\" = m.\"instanceId\"\nWHERE i.\"name\" = $1 AND m.key->>'remoteJid' = $2 AND m.\"messageTimestamp\" > $3\nORDER BY m.\"messageTimestamp\" DESC\nLIMIT 10000;",
         "options": {
           "queryReplacement": "={{ $('Trigger').first().json.instance_name }},{{ $('Loop Chats').item.json.remote_jid }},{{ $('Get Existing').item.json.checkpoint ? Math.floor(new Date($('Get Existing').item.json.checkpoint).getTime() / 1000) : 0 }}"
         }
@@ -94,12 +94,12 @@
         880,
         0
       ],
-      "id": "0b466fe0-fe4f-4f51-b6f7-e84b84ca2765",
+      "id": "5879409b-071f-5566-a6a5-66f67ab9cf27",
       "name": "Find Messages"
     },
     {
       "parameters": {
-        "jsCode": "const chat = $('Loop Chats').item.json || {};\nconst inst = $('Trigger').first().json.instance_name || '';\nconst remoteJid = chat.remote_jid || '';\n\nconst existingItem = $('Get Existing').item.json || {};\nconst prevTranscript = existingItem.transcript || '';\n\nconst all = $input.all().map((i) => i.json);\nconst toIso = (ts) => (ts ? new Date(ts * 1000).toISOString() : null);\n\nif (all.length === 0) {\n  return [{ json: {\n    instance_name: inst,\n    remote_jid: remoteJid,\n    contact_name: chat.push_name || null,\n    phone: remoteJid ? remoteJid.replace('@s.whatsapp.net', '') : null,\n    transcript: prevTranscript,\n    first_message_at: null,\n    last_message_at: null,\n    checkpoint: null,\n  } }];\n}\n\nconst lastTs = all[all.length - 1].ts;\nconst textRows = all.filter((r) => r.body);\nlet transcript = prevTranscript;\nif (textRows.length) {\n  const newText = textRows.map((r) => (r.from_me ? 'Eu' : 'Contato') + ': ' + r.body).join('\\n');\n  transcript = prevTranscript ? prevTranscript + '\\n' + newText : newText;\n}\n\nreturn [{ json: {\n  instance_name: inst,\n  remote_jid: remoteJid,\n  contact_name: chat.push_name || null,\n  phone: remoteJid ? remoteJid.replace('@s.whatsapp.net', '') : null,\n  transcript,\n  first_message_at: null,\n  last_message_at: toIso(lastTs),\n  checkpoint: toIso(lastTs),\n} }];"
+        "jsCode": "const chat = $('Loop Chats').item.json || {};\nconst inst = $('Trigger').first().json.instance_name || '';\nconst remoteJid = chat.remote_jid || '';\n\nconst existingItem = $('Get Existing').item.json || {};\nconst prevTranscript = existingItem.transcript || '';\n\nconst all = $input.all().map((i) => i.json).sort((a, b) => a.ts - b.ts);\nconst toIso = (ts) => (ts ? new Date(ts * 1000).toISOString() : null);\n\nif (all.length === 0) {\n  return [{ json: {\n    instance_name: inst,\n    remote_jid: remoteJid,\n    contact_name: chat.push_name || null,\n    phone: remoteJid ? remoteJid.replace('@s.whatsapp.net', '') : null,\n    transcript: prevTranscript,\n    first_message_at: null,\n    last_message_at: null,\n    checkpoint: null,\n  } }];\n}\n\nconst lastTs = all[all.length - 1].ts;\nconst textRows = all.filter((r) => r.body);\nlet transcript = prevTranscript;\nif (textRows.length) {\n  const newText = textRows.map((r) => (r.from_me ? 'Eu' : 'Contato') + ': ' + r.body).join('\\n');\n  transcript = prevTranscript ? prevTranscript + '\\n' + newText : newText;\n}\n\nreturn [{ json: {\n  instance_name: inst,\n  remote_jid: remoteJid,\n  contact_name: chat.push_name || null,\n  phone: remoteJid ? remoteJid.replace('@s.whatsapp.net', '') : null,\n  transcript,\n  first_message_at: null,\n  last_message_at: toIso(lastTs),\n  checkpoint: toIso(lastTs),\n} }];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -107,7 +107,7 @@
         1100,
         0
       ],
-      "id": "3d6df6d5-c4c2-4a4d-9d55-a5037011e935",
+      "id": "e5cd890d-02e0-5905-a222-3fdfc020bc6b",
       "name": "Merge"
     },
     {
@@ -136,7 +136,7 @@
         1320,
         0
       ],
-      "id": "8b108d6c-023e-4130-8f87-d2b5fd57126c",
+      "id": "d8d88c33-dd93-5028-9c24-4d93fdf30817",
       "name": "Upsert Chat",
       "credentials": {
         "supabaseApi": {

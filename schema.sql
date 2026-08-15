@@ -145,7 +145,7 @@ as $$
 begin
   update radar_pe_instances
      set connection_state = p_connection_state,
-         offline          = (coalesce(p_connection_state, '') <> 'open'),
+         offline          = (coalesce(p_connection_state, 'close') = 'close'),
          last_sync_at     = now()
    where name = p_name;
   return true;
