@@ -36,7 +36,6 @@
             }
           ]
         },
-        "sendBody": false,
         "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",
@@ -56,7 +55,6 @@
     },
     {
       "parameters": {
-        "batchSize": 1,
         "options": {}
       },
       "type": "n8n-nodes-base.splitInBatches",
@@ -70,8 +68,9 @@
     },
     {
       "parameters": {
-        "method": "GET",
-        "url": "https://evolution.tnledu.shop/instance/connectionState/{{ encodeURIComponent($('Loop Instances').item.json.name) }}",
+        "url": "=https://evolution.tnledu.shop/instance/connectionState/{{ encodeURIComponent($('Loop Instances').item.json.name) }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "evolutionApi",
         "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",
@@ -81,7 +80,13 @@
         0
       ],
       "id": "15eb64fc-a4ef-50ca-869a-f1eb78ae7aea",
-      "name": "Connection State"
+      "name": "Connection State",
+      "credentials": {
+        "evolutionApi": {
+          "id": "QgTe0fvaWVxshbUk",
+          "name": "Admin acesso geral"
+        }
+      }
     },
     {
       "parameters": {
@@ -106,13 +111,13 @@
         "headerParameters": {
           "parameters": [
             {
-              "name": "Prefer",
-              "value": "return=minimal"
+              "name": "Content-Type",
+              "value": "application/json"
             }
           ]
         },
-        "sendBody": true,
         "options": {},
+        "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ p_name: $json.name, p_connection_state: $json.state }) }}"
       },
@@ -201,6 +206,5 @@
       ]
     }
   },
-  "settings": {},
   "pinData": {}
 }

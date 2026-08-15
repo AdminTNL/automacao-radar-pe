@@ -36,7 +36,6 @@
             }
           ]
         },
-        "sendBody": false,
         "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",
@@ -56,7 +55,6 @@
     },
     {
       "parameters": {
-        "batchSize": 1,
         "options": {}
       },
       "type": "n8n-nodes-base.splitInBatches",
@@ -156,6 +154,5 @@
       ]
     }
   },
-  "settings": {},
   "pinData": {}
 }
