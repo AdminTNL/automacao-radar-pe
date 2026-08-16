@@ -68,7 +68,30 @@
     },
     {
       "parameters": {
-        "url": "=https://evolution.tnledu.shop/instance/connectionState/{{ encodeURIComponent($('Loop Instances').item.json.name) }}",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "e86213c4-f26d-5289-b569-12e02dcc6539",
+              "name": "name",
+              "value": "={{ $json.name }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        660,
+        0
+      ],
+      "id": "0c7e99d4-4dea-5da7-8b67-77c6c6e6fa4d",
+      "name": "Set Instance"
+    },
+    {
+      "parameters": {
+        "url": "=https://evolution.tnledu.shop/instance/connectionState/{{ encodeURIComponent($json.name) }}",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "evolutionApi",
         "options": {}
@@ -76,7 +99,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        660,
+        880,
         0
       ],
       "id": "15eb64fc-a4ef-50ca-869a-f1eb78ae7aea",
@@ -90,12 +113,12 @@
     },
     {
       "parameters": {
-        "jsCode": "const j = $input.first().json || {};\nconst state =\n  j.state ||\n  (j.instance && j.instance.state) ||\n  (j.instance && j.instance.connectionStatus && j.instance.connectionStatus.state) ||\n  'unknown';\nreturn [{ json: { name: $('Loop Instances').item.json.name, state } }];"
+        "jsCode": "const j = $input.first().json || {};\nconst state =\n  j.state ||\n  (j.instance && j.instance.state) ||\n  (j.instance && j.instance.connectionStatus && j.instance.connectionStatus.state) ||\n  'unknown';\nreturn [{ json: { name: $('Set Instance').first().json.name, state } }];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        880,
+        1100,
         0
       ],
       "id": "5bc2393e-9bae-5a84-bac9-c9ecc56cb0df",
@@ -130,7 +153,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        1100,
+        1320,
         0
       ],
       "id": "2fb00a19-67ec-5c3d-8fba-1ce688ea0624",
@@ -169,6 +192,17 @@
     "Loop Instances": {
       "main": [
         [],
+        [
+          {
+            "node": "Set Instance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Instance": {
+      "main": [
         [
           {
             "node": "Connection State",

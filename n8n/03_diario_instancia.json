@@ -17,7 +17,7 @@
         "operation": "executeQuery",
         "query": "WITH ranked AS (\n  SELECT\n    m.key->>'remoteJid'    AS remote_jid,\n    m.key->>'remoteJidAlt' AS remote_jid_alt,\n    m.\"pushName\"           AS msg_push_name,\n    c.\"pushName\"           AS contact_push_name,\n    m.\"messageTimestamp\"   AS ts,\n    (m.key->>'fromMe')::boolean AS from_me,\n    ROW_NUMBER() OVER (\n      PARTITION BY m.key->>'remoteJid'\n      ORDER BY m.\"messageTimestamp\" DESC\n    ) AS latest_rn,\n    ROW_NUMBER() OVER (\n      PARTITION BY m.key->>'remoteJid'\n      ORDER BY (m.key->>'fromMe')::boolean ASC, m.\"messageTimestamp\" DESC\n    ) AS incoming_rn\n  FROM \"Message\" m\n  JOIN \"Instance\" i ON i.\"id\" = m.\"instanceId\"\n  LEFT JOIN \"Contact\" c ON c.\"remoteJid\" = m.key->>'remoteJid' AND c.\"instanceId\" = m.\"instanceId\"\n  WHERE i.\"name\" = $1\n    AND (m.key->>'remoteJid' LIKE '%@s.whatsapp.net' OR m.key->>'remoteJid' LIKE '%@lid')\n    AND m.key->>'remoteJid' <> '0@s.whatsapp.net'\n)\nSELECT\n  remote_jid,\n  MAX(ts) AS last_message_ts,\n  COALESCE(\n    MAX(contact_push_name),\n    MAX(msg_push_name) FILTER (WHERE incoming_rn = 1)\n  ) AS push_name,\n  CASE\n    WHEN remote_jid LIKE '%@s.whatsapp.net' THEN replace(remote_jid, '@s.whatsapp.net', '')\n    WHEN MAX(remote_jid_alt) LIKE '%@s.whatsapp.net' THEN replace(MAX(remote_jid_alt), '@s.whatsapp.net', '')\n    ELSE remote_jid\n  END AS phone\nFROM ranked\nGROUP BY remote_jid\nORDER BY last_message_ts DESC;",
         "options": {
-          "queryReplacement": "={{ $('Trigger').first().json.instance_name }}"
+          "queryReplacement": "={{ $json.instance_name }}"
         }
       },
       "type": "n8n-nodes-base.postgres",
@@ -50,6 +50,47 @@
     },
     {
       "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a359ec53-9bfa-5a50-8d15-fa6d4f704ba6",
+              "name": "instance_name",
+              "value": "={{ $('Trigger').first().json.instance_name }}",
+              "type": "string"
+            },
+            {
+              "id": "6a67c0a2-e084-57af-8b84-8e4bd26b8ccd",
+              "name": "remote_jid",
+              "value": "={{ $json.remote_jid }}",
+              "type": "string"
+            },
+            {
+              "id": "271ff1e4-8d64-5ccc-8a27-0a4a70fb5f6b",
+              "name": "push_name",
+              "value": "={{ $json.push_name }}",
+              "type": "string"
+            },
+            {
+              "id": "f8d120fa-9776-59a8-89a0-3552e38a3c35",
+              "name": "phone",
+              "value": "={{ $json.phone }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        660,
+        0
+      ],
+      "id": "9d7105f9-53c9-5559-93b7-f7f1fa7116eb",
+      "name": "Set Chat"
+    },
+    {
+      "parameters": {
         "method": "POST",
         "url": "https://database.tnledu.shop/rest/v1/rpc/radar_pe_get_chat",
         "authentication": "predefinedCredentialType",
@@ -66,12 +107,12 @@
         "options": {},
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ p_instance_name: $('Trigger').first().json.instance_name, p_remote_jid: $('Loop Chats').item.json.remote_jid }) }}"
+        "jsonBody": "={{ JSON.stringify({ p_instance_name: $json.instance_name, p_remote_jid: $json.remote_jid }) }}"
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        660,
+        880,
         0
       ],
       "id": "b553d605-1333-59a5-bd8d-2324d420456e",
@@ -88,13 +129,13 @@
         "operation": "executeQuery",
         "query": "SELECT\n  (m.key->>'fromMe')::boolean AS from_me,\n  m.key->>'id' AS msg_id,\n  m.\"messageTimestamp\" AS ts,\n  CASE\n    WHEN m.message ? 'audioMessage'    THEN '[audio]'\n    WHEN m.message ? 'imageMessage'    THEN COALESCE(m.message->'imageMessage'->>'caption', '[imagem]')\n    WHEN m.message ? 'videoMessage'    THEN COALESCE(m.message->'videoMessage'->>'caption', '[video]')\n    WHEN m.message ? 'stickerMessage'  THEN '[figurinha]'\n    WHEN m.message ? 'documentMessage' THEN COALESCE(m.message->'documentMessage'->>'caption', '[documento]')\n    WHEN m.message ? 'locationMessage' THEN '[localizacao]'\n    WHEN m.message ? 'reactionMessage' THEN '[reacao]'\n    WHEN m.message ? 'contactMessage'  THEN COALESCE(m.message->'contactMessage'->>'displayName', '[contato]')\n    ELSE COALESCE(\n      m.message->>'conversation',\n      m.message->'extendedTextMessage'->>'text',\n      m.message->'templateMessage'->'hydratedTemplate'->>'hydratedContentText',\n      m.message->'templateMessage'->'hydratedTemplate'->>'title'\n    )\n  END AS body\nFROM \"Message\" m\nJOIN \"Instance\" i ON i.\"id\" = m.\"instanceId\"\nWHERE i.\"name\" = $1 AND m.key->>'remoteJid' = $2 AND m.\"messageTimestamp\" > $3\nORDER BY m.\"messageTimestamp\" DESC\nLIMIT 10000;",
         "options": {
-          "queryReplacement": "={{ $('Trigger').first().json.instance_name }},{{ $('Loop Chats').item.json.remote_jid }},{{ $('Get Existing').item.json.checkpoint ? Math.floor(new Date($('Get Existing').item.json.checkpoint).getTime() / 1000) : 0 }}"
+          "queryReplacement": "={{ $('Set Chat').first().json.instance_name }},{{ $('Set Chat').first().json.remote_jid }},{{ $json.checkpoint ? Math.floor(new Date($json.checkpoint).getTime() / 1000) : 0 }}"
         }
       },
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        880,
+        1100,
         0
       ],
       "id": "5879409b-071f-5566-a6a5-66f67ab9cf27",
@@ -108,12 +149,12 @@
     },
     {
       "parameters": {
-        "jsCode": "const chat = $('Loop Chats').item.json || {};\nconst inst = $('Trigger').first().json.instance_name || '';\nconst remoteJid = chat.remote_jid || '';\n\nconst existingItem = $('Get Existing').item.json || {};\nconst prevTranscript = existingItem.transcript || '';\n\nconst seen = new Set();\nconst all = $input.all()\n  .map((i) => i.json)\n  .sort((a, b) => a.ts - b.ts)\n  .filter((r) => {\n    const k = r.msg_id || (r.ts + '_' + r.body);\n    if (seen.has(k)) return false;\n    seen.add(k);\n    return true;\n  });\nconst toIso = (ts) => (ts ? new Date(ts * 1000).toISOString() : null);\n\nif (all.length === 0) {\n  return [{ json: {\n    instance_name: inst,\n    remote_jid: remoteJid,\n    contact_name: chat.push_name || null,\n    phone: chat.phone || null,\n    transcript: prevTranscript,\n    first_message_at: null,\n    last_message_at: null,\n    checkpoint: null,\n  } }];\n}\n\nconst lastTs = all[all.length - 1].ts;\nconst textRows = all.filter((r) => r.body);\nlet transcript = prevTranscript;\nif (textRows.length) {\n  const newText = textRows.map((r) => (r.from_me ? 'Eu' : 'Contato') + ': ' + r.body).join('\\n');\n  transcript = prevTranscript ? prevTranscript + '\\n' + newText : newText;\n}\n\nreturn [{ json: {\n  instance_name: inst,\n  remote_jid: remoteJid,\n  contact_name: chat.push_name || null,\n  phone: remoteJid ? remoteJid.replace('@s.whatsapp.net', '') : null,\n  transcript,\n  first_message_at: null,\n  last_message_at: toIso(lastTs),\n  checkpoint: toIso(lastTs),\n} }];"
+        "jsCode": "const chat = $('Set Chat').first().json || {};\nconst inst = chat.instance_name || '';\nconst remoteJid = chat.remote_jid || '';\n\nconst existingItem = $('Get Existing').first().json || {};\nconst prevTranscript = existingItem.transcript || '';\n\nconst seen = new Set();\nconst all = $input.all()\n  .map((i) => i.json)\n  .sort((a, b) => a.ts - b.ts)\n  .filter((r) => {\n    const k = r.msg_id || (r.ts + '_' + r.body);\n    if (seen.has(k)) return false;\n    seen.add(k);\n    return true;\n  });\nconst toIso = (ts) => (ts ? new Date(ts * 1000).toISOString() : null);\n\nif (all.length === 0) {\n  return [{ json: {\n    instance_name: inst,\n    remote_jid: remoteJid,\n    contact_name: chat.push_name || null,\n    phone: chat.phone || null,\n    transcript: prevTranscript,\n    first_message_at: null,\n    last_message_at: null,\n    checkpoint: null,\n  } }];\n}\n\nconst lastTs = all[all.length - 1].ts;\nconst textRows = all.filter((r) => r.body);\nlet transcript = prevTranscript;\nif (textRows.length) {\n  const newText = textRows.map((r) => (r.from_me ? 'Eu' : 'Contato') + ': ' + r.body).join('\\n');\n  transcript = prevTranscript ? prevTranscript + '\\n' + newText : newText;\n}\n\nreturn [{ json: {\n  instance_name: inst,\n  remote_jid: remoteJid,\n  contact_name: chat.push_name || null,\n  phone: chat.phone || null,\n  transcript,\n  first_message_at: null,\n  last_message_at: toIso(lastTs),\n  checkpoint: toIso(lastTs),\n} }];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1100,
+        1320,
         0
       ],
       "id": "e5cd890d-02e0-5905-a222-3fdfc020bc6b",
@@ -148,7 +189,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        1320,
+        1540,
         0
       ],
       "id": "d8d88c33-dd93-5028-9c24-4d93fdf30817",
@@ -187,6 +228,17 @@
     "Loop Chats": {
       "main": [
         [],
+        [
+          {
+            "node": "Set Chat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Chat": {
+      "main": [
         [
           {
             "node": "Get Existing",

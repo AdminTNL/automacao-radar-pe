@@ -1,15 +1,14 @@
 {
-  "name": "02 - Backfill (main)",
   "nodes": [
     {
       "parameters": {},
       "type": "n8n-nodes-base.manualTrigger",
       "typeVersion": 1,
       "position": [
-        0,
-        0
+        -816,
+        320
       ],
-      "id": "62df5694-ffd2-51af-9d29-278999a0ac29",
+      "id": "1cb32b3d-34a2-4890-a12c-fb8d63adca75",
       "name": "Manual Trigger"
     },
     {
@@ -32,10 +31,10 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        220,
-        0
+        -592,
+        320
       ],
-      "id": "1f192efd-23a3-5bc9-9091-2b7095029e68",
+      "id": "b8c05032-30e1-4d3b-a984-258f7c543d3e",
       "name": "Get Instances",
       "credentials": {
         "supabaseApi": {
@@ -51,38 +50,26 @@
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        440,
-        0
+        -384,
+        320
       ],
-      "id": "4eaf374d-e75e-5b81-9072-9c79fef5532c",
+      "id": "dcaac4c3-0bfd-4f96-b4d0-9d347f27ce94",
       "name": "Loop Instances"
     },
     {
       "parameters": {
         "workflowId": {
           "__rl": true,
-          "value": "SELECIONE_O_WORKFLOW_BACKFILL_INSTANCIA",
+          "value": "YBrByILhFr04jC7Q",
           "mode": "list",
+          "cachedResultUrl": "/workflow/YBrByILhFr04jC7Q",
           "cachedResultName": "01 - Backfill Instância"
         },
         "workflowInputs": {
           "mappingMode": "defineBelow",
-          "value": {
-            "instance_name": "={{ $json.name }}"
-          },
+          "value": {},
           "matchingColumns": [],
-          "schema": [
-            {
-              "id": "instance_name",
-              "displayName": "instance_name",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "canBeUsedToMatch": true,
-              "type": "string",
-              "removed": false
-            }
-          ],
+          "schema": [],
           "attemptToConvertTypes": false,
           "convertFieldsToString": true
         },
@@ -91,11 +78,34 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        660,
-        0
+        32,
+        336
       ],
-      "id": "1883b793-0e64-541a-b33a-26c43eefc075",
+      "id": "c0994cd4-ad3a-414c-baed-cc7a107cd3e8",
       "name": "Execute Instância"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "52cc9615-984e-413a-89fc-714aab066cf0",
+              "name": "instance_name",
+              "value": "={{ $json.name }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -144,
+        336
+      ],
+      "id": "f1a508b0-d0c1-47c8-9010-e60acbcda355",
+      "name": "Edit Fields"
     }
   ],
   "connections": {
@@ -126,7 +136,7 @@
         [],
         [
           {
-            "node": "Execute Instância",
+            "node": "Edit Fields",
             "type": "main",
             "index": 0
           }
@@ -143,7 +153,21 @@
           }
         ]
       ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Execute Instância",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
-  "pinData": {}
+  "pinData": {},
+  "meta": {
+    "instanceId": "be948e3395efb1e363bbe2b3fd07ab4faf0260a188cbd76d59748393aacaaaad"
+  }
 }
