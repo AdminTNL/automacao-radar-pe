@@ -68,6 +68,29 @@
     },
     {
       "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1b2c3d4-0001-4000-8000-000000000002",
+              "name": "instance_name",
+              "value": "={{ $json.name }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        550,
+        0
+      ],
+      "id": "a1b2c3d4-0001-4000-8000-000000000001",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
         "workflowId": {
           "__rl": true,
           "value": "SELECIONE_O_WORKFLOW_DIARIO_INSTANCIA",
@@ -76,22 +99,9 @@
         },
         "workflowInputs": {
           "mappingMode": "defineBelow",
-          "value": {
-            "instance_name": "={{ $json.name }}"
-          },
+          "value": {},
           "matchingColumns": [],
-          "schema": [
-            {
-              "id": "instance_name",
-              "displayName": "instance_name",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "canBeUsedToMatch": true,
-              "type": "string",
-              "removed": false
-            }
-          ],
+          "schema": [],
           "attemptToConvertTypes": false,
           "convertFieldsToString": true
         },
@@ -133,6 +143,17 @@
     "Loop Instances": {
       "main": [
         [],
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
         [
           {
             "node": "Execute Instância",
