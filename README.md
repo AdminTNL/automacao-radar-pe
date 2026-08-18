@@ -33,6 +33,8 @@ Evolution (Postgres, cred "admin evo")  ──►  n8n  ──►  Supabase (rad
 | `n8n/04_diario_main.json` | Main: cron diário → lista instâncias → chama 03 |
 | `n8n/05_health.json` | Cron diário: checa `connectionState` e marca sessões offline |
 | `queries_validacao.md` | Queries pra conferir o resultado do backfill |
+| `arquitetura.md` | Desenho técnico (estado atual + Etapas 2b/3) pra alinhamento com o time |
+| `front/` | CRM básico (Vite + React + TS) pra ver/editar `radar_pe_contacts` |
 
 ## Workflows
 
@@ -87,15 +89,19 @@ Em resumo: **Evolution** = fonte da verdade · **`radar_pe_chats`** = cópia de 
 
 | Campo | Automatizável |
 | --- | --- |
-| Nome / Telefone / Contato inicial / Sessão | automático |
+| Nome / Telefone / Contato inicial / Sessão | automático (preenchido só quando vazio; editável pelo time sem ser sobrescrito) |
 | Comunidade / Município | cruzamento (futuro) |
 | Temperatura / Teor / Responsável / Observação | humano (IA depois) |
 | Status / Encaminhamento / `sent_to_radar` | critério (Etapa 2) |
 
+> `radar_pe_contacts` é a tabela operacional (tipo CRM) que o time consulta/edita no front.
+> A automação só preenche os campos automáticos e nunca sobrescreve edição humana; o
+> `updated_at` só avança quando o time edita (trigger `radar_pe_contacts_touch`).
+
 ## Limitações conhecidas
 
 - **Race de checkpoint (mesmo segundo):** o diário usa `messageTimestamp > checkpoint`. Se uma mensagem chegar no exato segundo do checkpoint (gravada após a leitura), pode ser pulada. Raríssimo e de baixo impacto.
-- **`@lid` vs `@s.whatsapp.net`:** um mesmo contato pode aparecer em dois formatos de jid, gerando duplicata. Normalizar via `key.remoteJidAlt` se virar problema.
+- **`@lid` vs `@s.whatsapp.net`:** a mesma conversa pode aparecer sob dois jids (privacidade vs número), gerando duplicata. Resolvido: a captação canonicaliza via `key.remoteJidAlt` (CTE `lid_map`) e há o `radar_pe_merge_lid_duplicates()` pra unir os existentes. `@lid` sem número conhecido (privacidade total) segue `@lid` — não há dedup possível.
 - **Campos menores:** `phone` de contato `@lid` guarda o lid (não o número); `last_activity_at` ainda não é preenchido; `first_message_at` fica impreciso em conversas com >10k mensagens (daria pra vir de `Contact.createdAt`).
 
 ## Setup
@@ -104,11 +110,19 @@ Em resumo: **Evolution** = fonte da verdade · **`radar_pe_chats`** = cópia de 
 2. Seedar `radar_pe_instances` só com as sessões de PE (nome exato, com acento/espaço).
 3. Importar os 5 JSONs no n8n.
 4. Conectar credenciais: Postgres `admin evo` (nós `Find Chats`/`Find Messages`), Supabase (`Supabase account`), Evolution (health), e selecionar os sub-workflows nos mains.
+5. Front: `cd front && npm install`, copiar `.env.example` → `.env` e preencher `VITE_SUPABASE_URL` + `VITE_SUPABASE_SERVICE_ROLE_KEY`, depois `npm run dev`.
+
+## Front (CRM básico)
+
+- Vite + React + TS, falando direto com o Supabase via `@supabase/supabase-js`.
+- Lista `radar_pe_contacts` ordenada por `last_message_at` desc, com busca (nome/telefone), filtro por categoria e edição inline de nome/telefone (o trigger `radar_pe_contacts_touch` bumpa `updated_at` na edição).
+- **Auth:** usa service role key (bypassa RLS) — **só pra demo local**. Para compartilhar com o time, trocar por anon key + Supabase Auth + RLS.
 
 ## Roadmap
 
 - [X] Etapa 1 — captação (backfill + diário + health)
 - [ ] Etapa 1 (otimização p/ produção) — diário em bulk por instância + skip de inativos; índice no `findChats`
-- [ ] Etapa 2 — registro em `radar_pe_contacts` + critério (com a Maíra)
+- [X] Etapa 2a — registro mecânico em `radar_pe_contacts` (upsert via `radar_pe_upsert_chat` + `radar_pe_backfill_contacts`)
+- [ ] Etapa 2b — critério status/encaminhamento/`sent_to_radar` (com a Maíra)
 - [ ] Etapa 3 — alimentar Radar Mobiliza PE (Notion)
 - [ ] Calibração (2–3 rodadas) + trocar frase do painel de campo

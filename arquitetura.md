@@ -1,0 +1,126 @@
+# Arquitetura — Radar Mobiliza PE
+
+Documento de referência do desenho técnico do projeto, pra alinhamento interno e com o time.
+Consolida o que já está implementado (Etapas 1 e 2a) e o desenho proposto para as Etapas 2b/3.
+
+## Estado atual
+
+| Etapa | Status |
+| --- | --- |
+| 1 — captação (backfill + diário + health) | ✅ feito |
+| 2a — registro mecânico em `radar_pe_contacts` | ✅ feito |
+| 2b — critério (temperatura / status / encaminhamento / caso) | ⏳ desenho abaixo (falta o critério da Maíra) |
+| 3 — alimentar Radar Mobiliza PE (Notion) | ⏳ desenho abaixo |
+
+## Visão geral
+
+```
+Evolution (Postgres) ──► n8n ──► Supabase (radar_pe_*) ──► (futuro) Notion Radar
+                                        │
+                                        └─► Front (Botando pra Moer): contatos, sessões, conversas
+```
+
+- **Evolution** = fonte da verdade (mensagens cruas).
+- **`radar_pe_chats`** = cópia de trabalho (transcript + checkpoint + mensagens).
+- **`radar_pe_contacts`** = registro operacional/CRM (o que o time consulta e edita).
+- **`radar_pe_cases`** = só casos de Radar (fragmento congelado + dispatch).
+
+## Princípios de desenho
+
+1. **Caso ≠ conversa.** Uma conversa pode gerar vários casos de Radar ao longo do tempo. Um caso, uma vez identificado, é **congelado** e nunca é sobrescrito pelo desenrolar da conversa.
+2. **Identidade vs. estado.** Contato é identidade (pessoa/sessão); caso é artefato de Radar.
+3. **Automação não sobrescreve o time.** Campos mantidos pelo time nunca são clobberados; a automação só sugere. (`updated_at` só avança em edição humana — trigger com sentinel `radar_pe.is_auto`.)
+4. **Nome/telefone são do sistema.** Refletem o WhatsApp (system wins); editáveis no front apenas quando vazios.
+
+## Modelo de dados
+
+### `radar_pe_instances` — sessões da Evolution
+`name` (PK, exato), `category`, `responsavel` (novo), `connection_state`, `last_activity_at`, `last_sync_at`, `offline`.
+
+O `responsavel` da sessão preenche dinamicamente o "responsável" exibido nos contatos (join no front; o `responsavel` do contato serve de override futuro).
+
+### `radar_pe_chats` — camada de captação (1 por conversa)
+`id`, `instance_name`, `remote_jid`, `contact_name`, `phone`, `first_message_at`, `last_message_at`, `checkpoint`, `transcript`.
+
+**Implementado:**
+
+- `messages jsonb` — array `[{ts, from_me, body, msg_id}]`. Base pro agrupamento por dia e pros timestamps no drawer.
+
+**Proposto:**
+
+- `criterion_checkpoint timestamptz` — cursor até onde o critério já avaliou (impede reavaliar/sobrescrever).
+
+### `radar_pe_contacts` — registro operacional (1 por conversa)
+`chat_id` (not null, único), `instance_name`, `remote_jid`, `contact_name`, `phone`, `first_message_at`, `last_message_at`, `origem`, `comunidade`, `municipio`, `temperatura`, `teor_da_conversa`, `responsavel`, `status`, `encaminhamento`, `observacao`, `sent_to_radar`, `created_at`, `updated_at`.
+
+**Proposto:**
+
+- `last_message_from` (`'me' | 'contact' | null`) — sinal mecânico "quem falou por último" (alimenta status/aguardando resposta).
+- `temperatura_sugerida` — sugestão automática (frio/morno/quente), só leitura no front. O `temperatura` é do time.
+
+### `radar_pe_cases` — casos de Radar (proposto, 1 contato → N casos)
+`id`, `contact_id`, `chat_id`, `fragment_start_at`, `fragment_end_at`, `transcript_snapshot`, `temperatura_snapshot`, `encaminhamento`, `teor_da_conversa`, `origem`/`comunidade`/`municipio`, `responsavel`, `sent_to_radar`, `notion_page_id`, `sent_at`, `created_at`.
+
+Cada caso congela um trecho da conversa no momento da identificação. Conversa continuar ⇒ novos casos, nunca reescrever o antigo.
+
+## Temperatura (do contato)
+
+Definida como **info geral do contato**, mantida pelo time, com sugestão automática:
+
+| Temperatura | Definição (notas da reunião) |
+| --- | --- |
+| Frio | central manda mensagem, pessoa não responde |
+| Morno | central manda, pessoa responde sem puxar assunto |
+| Quente | central manda, pessoa responde, usa mídia etc. |
+
+- Automação calcula `temperatura_sugerida` a partir de sinais mecânicos (respondeu?, mídia?, nº msgs).
+- O time confirma/ajusta o `temperatura` no front (dono do valor).
+
+## Pipeline de identificação de caso (Etapa 2b → 3)
+
+```
+captação (mensagens jsonb)
+  → sinais mecânicos (último remetente, respondeu?, mídia?, nº msgs)
+  → temperatura_sugerida (frio/morno/quente)
+  → julgamento fino (Maíra: descarta spam/off-topic/resolvido)
+  → abre radar_pe_cases (congela fragmento)
+  → dispatch Notion (Etapa 3) → sent_to_radar = true
+```
+
+- **Camada mecânica** (determinística): derivada do `messages`, sempre fresca.
+- **Camada fina** (julgamento): critério da Maíra, depois assistida por IA.
+- **Calibração**: bater perto dos **15** casos da semana 11–14/08 (referência "Botando pra Moer").
+
+## Frequência e gatilhos
+
+- Hoje: diário roda em cron (8h). O critério pode rodar logo após cada captação (delta).
+- **Trigger de resposta**: resposta do operador no WhatsApp muda o estado do caso. Caminho = webhook `message.upsert` da Evolution (`fromMe=true`) reavaliando só aquele chat. É a infra de "ao vivo" (adiada): primeiro delta agendado, trigger depois.
+
+## Custos/notas de implementação
+
+- **`messages jsonb`**: a captação (n8n) já tem `ts/from_me/body/msg_id` por mensagem — guardar o array é mudança pequena no `Build Transcript`/`Merge` + parâmetro `p_messages` no upsert.
+- **Append incremental**: mover pro SQL (RPC `radar_pe_append_messages`) pra não transportar o array inteiro a cada rodada.
+- **Histórico**: chats já capturados não têm timestamp por mensagem no transcript → **re-backfill** (re-ler a Evolution e reconstruir `transcript` + `messages`). Único e pesado.
+
+## Dedup `@lid` vs `@s.whatsapp.net` (implementado)
+
+**Problema:** a mesma conversa pode aparecer sob dois jids na Evolution — `@lid` (privacidade) e `@s.whatsapp.net` (número). Uma mensagem tem `key.remoteJid = @lid` **e** `key.remoteJidAlt = @s.whatsapp.net`; como o `Find Chats` agrupava por `COALESCE(remoteJidAlt, remoteJid)`, mensagens `@lid` sem `alt` viravam um chat separado → contato duplicado.
+
+**Aprendizados (dados reais):**
+
+- A tabela `Contact` da Evolution **não** tem coluna de número; `Contact.id` é um cuid opaco (não é o LID) e `Contact.remoteJid` guarda o jid como veio (`@lid` ou número). **Não serve** de mapa `lid → número`.
+- A única fonte confiável do mapa é `Message.key->>'remoteJidAlt'`. `@lid` sem `alt` em nenhuma mensagem = privacidade total (sem número) → não dá pra deduplicar (e nem há duplicata).
+- `msg_id` **não é único entre instâncias** → sempre filtrar por `instance_name` no mapa e no merge.
+
+**Solução:**
+
+- **Canonicalização na captação (n8n 01/03):** CTE `lid_map` (lid → número, via `remoteJidAlt`, por instância) + `COALESCE` que resolve `@lid` pro número quando conhecido; `Find Messages` busca pelos dois jids via CTE `aliases`.
+- **Merge dos existentes:** `radar_pe_merge_lid_duplicates()` une chats da mesma instância que compartilham `msg_id` (mensagens + transcript regenerado), mantém o número como canônico, une contatos e apaga o `@lid`. Idempotente.
+- **Limpeza de órfãos:** `radar_pe_cleanup_orphan_lids()` apaga chats `@lid` **sem `messages`** (linha órfã da captação pré-canonicalização, cujo dado já migrou pro número), pulando contatos com edição manual. Idempotente. Como a canonicalização impede novos splits, não há novos órfãos — é limpeza única.
+
+## Pontos em aberto
+
+1. **Quem abre o caso**: a ferramenta cria sozinha ou só sugere e o time aprova? (depende do critério da Maíra)
+2. **`sent_to_radar`**: fica só no caso, ou também um flag no contato pra ordenar/filtrar o dash?
+3. **Mapeamento sinais → temperatura**: regras exatas da Maíra.
+4. **O que congela no snapshot** além do transcript (ex.: cópia de temperatura/encaminhamento no momento).

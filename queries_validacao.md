@@ -66,3 +66,183 @@ ORDER BY name;
 ```
 
 Esperado: `offline = false` nas sessões ativas; `true` nas caídas.
+
+---
+
+# Etapa 2 — registro de contatos (`radar_pe_contacts`)
+
+Rodar após aplicar o `schema.sql` + `select radar_pe_backfill_contacts();`.
+
+## 7. Contatos vs chats (deve ser 1:1)
+
+```sql
+SELECT
+  (SELECT count(*) FROM radar_pe_chats) AS chats,
+  (SELECT count(*) FROM radar_pe_contacts) AS contatos,
+  (SELECT count(*) FROM radar_pe_chats c
+    LEFT JOIN radar_pe_contacts k ON k.chat_id = c.id
+    WHERE k.id IS NULL) AS chats_sem_contato;
+```
+
+Esperado: `chats = contatos` e `chats_sem_contato = 0`.
+
+## 8. Campos automáticos preenchidos
+
+```sql
+SELECT
+  count(*) FILTER (WHERE chat_id IS NULL)      AS sem_chat_id,
+  count(*) FILTER (WHERE instance_name IS NULL) AS sem_instance,
+  count(*) FILTER (WHERE remote_jid IS NULL)    AS sem_jid,
+  count(*) FILTER (WHERE last_message_at IS NULL) AS sem_last_message
+FROM radar_pe_contacts;
+```
+
+Esperado: `0` em tudo (`contact_name`/`phone` podem ser nulos p/ contatos sem nome resolvido ou `@lid`).
+
+## 9. Campos humanos/critério intocados
+
+```sql
+SELECT
+  count(*) FILTER (WHERE origem IS NOT NULL)           AS origem,
+  count(*) FILTER (WHERE comunidade IS NOT NULL)       AS comunidade,
+  count(*) FILTER (WHERE municipio IS NOT NULL)        AS municipio,
+  count(*) FILTER (WHERE temperatura IS NOT NULL)      AS temperatura,
+  count(*) FILTER (WHERE teor_da_conversa IS NOT NULL) AS teor,
+  count(*) FILTER (WHERE responsavel IS NOT NULL)      AS responsavel,
+  count(*) FILTER (WHERE observacao IS NOT NULL)       AS observacao,
+  count(*) FILTER (WHERE status IS NOT NULL)           AS status,
+  count(*) FILTER (WHERE encaminhamento IS NOT NULL)   AS encaminhamento,
+  count(*) FILTER (WHERE sent_to_radar)                AS sent_to_radar
+FROM radar_pe_contacts;
+```
+
+Esperado: `0` em tudo (ainda não há critério/humano na Etapa 2).
+
+## 10. Edição manual não é sobrescrita (teste)
+
+1. Editar nome/telefone de um contato pelo front/SQL:
+   ```sql
+   UPDATE radar_pe_contacts SET contact_name = 'Fulano (time)', phone = '5581900000000' WHERE id = '<id>';
+   ```
+2. Rodar o diário (ou `radar_pe_upsert_chat` de novo) pro mesmo chat.
+3. Conferir que `contact_name`/`phone` continuam os valores do time (não voltam ao automático) e que `updated_at` mudou.
+
+```sql
+SELECT contact_name, phone, updated_at FROM radar_pe_contacts WHERE id = '<id>';
+```
+
+---
+
+# Etapa 2b — mensagens estruturadas (`radar_pe_chats.messages`)
+
+Rodar após aplicar o `schema.sql` e **re-rodar o backfill** (n8n 02) pra preencher `messages` dos chats existentes.
+
+## 11. Messages preenchido
+
+```sql
+SELECT
+  count(*) AS chats,
+  count(*) FILTER (WHERE messages IS NOT NULL AND jsonb_array_length(messages) > 0) AS com_messages,
+  count(*) FILTER (WHERE messages IS NULL OR jsonb_array_length(messages) = 0) AS sem_messages
+FROM radar_pe_chats;
+```
+
+Esperado: `sem_messages` próximo de 0 após o re-backfill (só chats sem nenhuma mensagem ficam vazios).
+
+## 12. Amostra das mensagens (shape + ordem por ts)
+
+```sql
+SELECT instance_name, remote_jid,
+       jsonb_array_length(messages) AS qtd,
+       messages->0 AS primeira,
+       messages->-1 AS ultima
+FROM radar_pe_chats
+WHERE messages IS NOT NULL AND jsonb_array_length(messages) > 0
+ORDER BY last_message_at DESC
+LIMIT 10;
+```
+
+Esperado: elementos com `ts`, `from_me`, `body`, `msg_id`; `ultima` com `ts` = `last_message_at`.
+
+## 13. Sem duplicatas por msg_id (após re-backfill)
+
+```sql
+SELECT count(*) AS chats_com_duplicata
+FROM radar_pe_chats c
+WHERE c.messages IS NOT NULL
+  AND jsonb_array_length(c.messages) <>
+     (SELECT count(DISTINCT m->>'msg_id')
+      FROM jsonb_array_elements(c.messages) m);
+```
+
+Esperado: `0` (o append com dedup por `msg_id` não pode duplicar).
+
+---
+
+# Dedup `@lid` vs `@s.whatsapp.net`
+
+Rodar após aplicar o `schema.sql` (canonicalização na captação) e **uma vez** o merge:
+
+```sql
+select radar_pe_merge_lid_duplicates();
+```
+
+## 14. Chats `@lid` restantes (devem ser só privacidade pura, sem número)
+
+```sql
+SELECT instance_name, remote_jid, jsonb_array_length(messages) AS qtd
+FROM radar_pe_chats
+WHERE remote_jid LIKE '%@lid'
+ORDER BY instance_name, remote_jid;
+```
+
+Esperado: só `@lid` que nunca tiveram `remoteJidAlt` (sem número). Se sobrar um par `@lid` + `@s.whatsapp.net` da mesma conversa, o merge não o pegou (revisar).
+
+## 15. Chats que compartilham `msg_id` (duplicatas ainda não unidas)
+
+```sql
+SELECT l.instance_name, l.remote_jid AS lid, n.remote_jid AS numero
+FROM radar_pe_chats l
+JOIN radar_pe_chats n
+  ON n.instance_name = l.instance_name AND n.remote_jid LIKE '%@s.whatsapp.net'
+WHERE l.remote_jid LIKE '%@lid'
+  AND EXISTS (
+    SELECT 1 FROM jsonb_array_elements(l.messages) lm
+    JOIN jsonb_array_elements(n.messages) nm ON lm->>'msg_id' = nm->>'msg_id'
+  );
+```
+
+Esperado: `0` linhas após o merge.
+
+## 16. Chats `@lid` órfãos (sem `messages`) — candidatos à limpeza
+
+```sql
+SELECT instance_name, remote_jid
+FROM radar_pe_chats
+WHERE remote_jid LIKE '%@lid'
+  AND (messages IS NULL OR jsonb_array_length(messages) = 0)
+ORDER BY instance_name, remote_jid;
+```
+
+São chats da captação **pré-canonicalização** cuja conversa migrou pro chat do número (o dado real está lá). Rodar:
+
+```sql
+select radar_pe_cleanup_orphan_lids();
+```
+
+A função pula os órfãos cujo contato tem edição manual (status/encaminhamento/etc. preenchidos) e avisa num `NOTICE`.
+
+## 17. Órfãos que seriam pulados (têm edição manual no contato)
+
+```sql
+SELECT c.instance_name, c.remote_jid, c.contact_name
+FROM radar_pe_chats k
+JOIN radar_pe_contacts c ON c.chat_id = k.id
+WHERE k.remote_jid LIKE '%@lid'
+  AND (k.messages IS NULL OR jsonb_array_length(k.messages) = 0)
+  AND (c.origem IS NOT NULL OR c.comunidade IS NOT NULL OR c.municipio IS NOT NULL
+    OR c.temperatura IS NOT NULL OR c.teor_da_conversa IS NOT NULL OR c.responsavel IS NOT NULL
+    OR c.status IS NOT NULL OR c.encaminhamento IS NOT NULL OR c.observacao IS NOT NULL);
+```
+
+Esperado: `0` por enquanto (não houve edição manual). Se aparecer algo, revisar antes de apagar.
