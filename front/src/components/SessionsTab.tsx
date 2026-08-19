@@ -1,8 +1,7 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { fmtDate } from '../lib/format'
 import type { Instance } from '../types'
-import EditableText from './EditableText'
 
 const CATEGORIES = ['TÔ COM JOÃO', 'MOBILIZA', 'CHEGA JUNTO PE', 'IR']
 
@@ -18,33 +17,99 @@ interface SessionsTabProps {
 }
 
 export default function SessionsTab({ instances, onChanged }: SessionsTabProps) {
+  const [search, setSearch] = useState('')
+  const [categoryFilter, setCategoryFilter] = useState('')
+  const [showForm, setShowForm] = useState(false)
   const [newName, setNewName] = useState('')
   const [newCategory, setNewCategory] = useState('')
   const [newResponsavel, setNewResponsavel] = useState('')
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
+  const [success, setSuccess] = useState<string | null>(null)
+  const [responsaveis, setResponsaveis] = useState<string[]>([])
+  const [showRespForm, setShowRespForm] = useState(false)
+  const [newRespName, setNewRespName] = useState('')
+  const [respSaving, setRespSaving] = useState(false)
+  const [respError, setRespError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!success) return
+    const t = setTimeout(() => setSuccess(null), 3000)
+    return () => clearTimeout(t)
+  }, [success])
+
+  const loadResponsaveis = useCallback(async () => {
+    const { data } = await supabase.from('radar_pe_responsaveis').select('name').order('name')
+    setResponsaveis(((data ?? []) as { name: string }[]).map((r) => r.name))
+  }, [])
+
+  useEffect(() => {
+    void loadResponsaveis()
+  }, [loadResponsaveis])
+
+  const categories = useMemo(
+    () => Array.from(new Set(instances.map((i) => i.category).filter(Boolean) as string[])).sort(),
+    [instances],
+  )
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    return instances.filter((i) => {
+      if (categoryFilter && i.category !== categoryFilter) return false
+      if (!q) return true
+      return (
+        (i.name ?? '').toLowerCase().includes(q) ||
+        (i.responsavel ?? '').toLowerCase().includes(q)
+      )
+    })
+  }, [instances, search, categoryFilter])
+
+  const openForm = () => {
+    setNewName('')
+    setNewCategory('')
+    setNewResponsavel('')
+    setFormError(null)
+    setSuccess(null)
+    setShowForm(true)
+  }
+
+  const closeForm = () => {
+    if (saving) return
+    setShowForm(false)
+    setFormError(null)
+  }
 
   const addSession = async () => {
     const name = newName.trim()
-    if (!name) return
+    if (!name) {
+      setFormError('Digite o nome da sessão.')
+      return
+    }
     setSaving(true)
     setFormError(null)
 
-    const { error } = await supabase.from('radar_pe_instances').insert({
-      name,
-      category: newCategory || null,
-      responsavel: newResponsavel.trim() || null,
-    })
+    try {
+      const { error } = await supabase.from('radar_pe_instances').insert({
+        name,
+        category: newCategory || null,
+        responsavel: newResponsavel.trim() || null,
+      })
 
-    if (error) {
-      setFormError(error.message)
-    } else {
-      setNewName('')
-      setNewCategory('')
-      setNewResponsavel('')
-      onChanged()
+      if (error) {
+        setFormError(error.code === '23505' ? 'Já existe uma sessão com esse nome.' : error.message)
+      } else {
+        setNewName('')
+        setNewCategory('')
+        setNewResponsavel('')
+        setShowForm(false)
+        setSuccess('Sessão adicionada.')
+        onChanged()
+      }
+    } catch (e) {
+      setFormError(e instanceof Error ? e.message : 'Erro ao adicionar sessão.')
+    } finally {
+      setSaving(false)
     }
-    setSaving(false)
   }
 
   const updateCategory = async (name: string, value: string) => {
@@ -64,37 +129,72 @@ export default function SessionsTab({ instances, onChanged }: SessionsTabProps) 
     onChanged()
   }
 
+  const openRespForm = () => {
+    setNewRespName('')
+    setRespError(null)
+    setShowRespForm(true)
+  }
+
+  const closeRespForm = () => {
+    if (respSaving) return
+    setShowRespForm(false)
+    setRespError(null)
+  }
+
+  const addResponsavel = async () => {
+    const name = newRespName.trim()
+    if (!name) {
+      setRespError('Digite o nome do responsável.')
+      return
+    }
+    setRespSaving(true)
+    setRespError(null)
+
+    try {
+      const { error } = await supabase.from('radar_pe_responsaveis').insert({ name })
+
+      if (error) {
+        setRespError(error.code === '23505' ? 'Já existe esse responsável.' : error.message)
+      } else {
+        setNewRespName('')
+        setShowRespForm(false)
+        setNewResponsavel(name)
+        await loadResponsaveis()
+      }
+    } catch (e) {
+      setRespError(e instanceof Error ? e.message : 'Erro ao cadastrar responsável.')
+    } finally {
+      setRespSaving(false)
+    }
+  }
+
   return (
     <>
-      <div className="add-form">
+      <div className="filters">
         <input
           className="search"
           type="text"
-          placeholder="Nome da sessão (exato, igual na Evolution)"
-          value={newName}
-          onChange={(e) => setNewName(e.target.value)}
+          placeholder="Buscar por nome ou responsável…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
         />
-        <select value={newCategory} onChange={(e) => setNewCategory(e.target.value)}>
-          <option value="">Sem categoria</option>
-          {CATEGORIES.map((c) => (
+        <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
+          <option value="">Todas as categorias</option>
+          {categories.map((c) => (
             <option key={c} value={c}>
               {c}
             </option>
           ))}
         </select>
-        <input
-          className="search"
-          type="text"
-          placeholder="Responsável"
-          value={newResponsavel}
-          onChange={(e) => setNewResponsavel(e.target.value)}
-        />
-        <button type="button" className="refresh" onClick={() => void addSession()} disabled={saving || !newName.trim()}>
-          {saving ? 'Adicionando…' : 'Adicionar sessão'}
+        <button type="button" className="refresh" onClick={openRespForm}>
+          Cadastrar responsável
+        </button>
+        <button type="button" className="refresh" onClick={openForm}>
+          Adicionar sessão
         </button>
       </div>
 
-      {formError && <div className="error">Erro: {formError}</div>}
+      {success && <div className="success">{success}</div>}
 
       <div className="table-wrap">
         <table>
@@ -108,7 +208,7 @@ export default function SessionsTab({ instances, onChanged }: SessionsTabProps) 
             </tr>
           </thead>
           <tbody>
-            {instances.map((inst) => (
+            {filtered.map((inst) => (
               <tr key={inst.name}>
                 <td className="strong">{inst.name}</td>
                 <td>
@@ -125,11 +225,17 @@ export default function SessionsTab({ instances, onChanged }: SessionsTabProps) 
                   </select>
                 </td>
                 <td>
-                  <EditableText
-                    value={inst.responsavel}
-                    placeholder="—"
-                    onSave={(v) => updateResponsavel(inst.name, v)}
-                  />
+                  <select
+                    value={responsaveis.includes(inst.responsavel ?? '') ? (inst.responsavel ?? '') : ''}
+                    onChange={(e) => void updateResponsavel(inst.name, e.target.value)}
+                  >
+                    <option value="">—</option>
+                    {responsaveis.map((r) => (
+                      <option key={r} value={r}>
+                        {r}
+                      </option>
+                    ))}
+                  </select>
                 </td>
                 <td>
                   {inst.offline ? (
@@ -143,16 +249,117 @@ export default function SessionsTab({ instances, onChanged }: SessionsTabProps) 
                 <td className="muted">{fmtDate(inst.last_sync_at)}</td>
               </tr>
             ))}
-            {instances.length === 0 && (
+            {filtered.length === 0 && (
               <tr>
                 <td colSpan={5} className="state">
-                  Nenhuma sessão cadastrada.
+                  {instances.length === 0 ? 'Nenhuma sessão cadastrada.' : 'Nenhuma sessão encontrada.'}
                 </td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
+
+      {showForm && (
+        <div className="modal-overlay" onClick={closeForm}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <header className="modal-header">
+              <h2 className="modal-title">Adicionar sessão</h2>
+              <button type="button" className="drawer-close" onClick={closeForm} aria-label="Fechar">
+                ✕
+              </button>
+            </header>
+            <div className="modal-body">
+              <label className="modal-field">
+                <span>Nome</span>
+                <input
+                  className="search"
+                  type="text"
+                  placeholder="Nome da sessão"
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  autoFocus
+                />
+                <span className="modal-hint">Insira o nome EXATO da sessão na Evolution.</span>
+              </label>
+              <label className="modal-field">
+                <span>Categoria</span>
+                <select value={newCategory} onChange={(e) => setNewCategory(e.target.value)}>
+                  <option value="">Sem categoria</option>
+                  {CATEGORIES.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="modal-field">
+                <span>Responsável</span>
+                <div className="select-row">
+                  <select
+                    value={newResponsavel}
+                    onChange={(e) => setNewResponsavel(e.target.value)}
+                  >
+                    <option value="">Sem responsável</option>
+                    {responsaveis.map((r) => (
+                      <option key={r} value={r}>
+                        {r}
+                      </option>
+                    ))}
+                  </select>
+                  <button type="button" className="refresh" onClick={openRespForm}>
+                    + Novo
+                  </button>
+                </div>
+              </label>
+              {formError && <div className="error">Erro: {formError}</div>}
+            </div>
+            <footer className="modal-actions">
+              <button type="button" className="refresh" onClick={closeForm} disabled={saving}>
+                Cancelar
+              </button>
+              <button type="button" className="refresh" onClick={() => void addSession()} disabled={saving}>
+                {saving ? 'Criando…' : 'Criar sessão'}
+              </button>
+            </footer>
+          </div>
+        </div>
+      )}
+
+      {showRespForm && (
+        <div className="modal-overlay modal-top" onClick={closeRespForm}>
+          <div className="modal modal-top" onClick={(e) => e.stopPropagation()}>
+            <header className="modal-header">
+              <h2 className="modal-title">Cadastrar responsável</h2>
+              <button type="button" className="drawer-close" onClick={closeRespForm} aria-label="Fechar">
+                ✕
+              </button>
+            </header>
+            <div className="modal-body">
+              <label className="modal-field">
+                <span>Nome</span>
+                <input
+                  className="search"
+                  type="text"
+                  placeholder="Nome do responsável"
+                  value={newRespName}
+                  onChange={(e) => setNewRespName(e.target.value)}
+                  autoFocus
+                />
+              </label>
+              {respError && <div className="error">Erro: {respError}</div>}
+            </div>
+            <footer className="modal-actions">
+              <button type="button" className="refresh" onClick={closeRespForm} disabled={respSaving}>
+                Cancelar
+              </button>
+              <button type="button" className="refresh" onClick={() => void addResponsavel()} disabled={respSaving}>
+                {respSaving ? 'Salvando…' : 'Cadastrar'}
+              </button>
+            </footer>
+          </div>
+        </div>
+      )}
     </>
   )
 }

@@ -231,10 +231,35 @@ export default function ContactsTab({ instances }: ContactsTabProps) {
                     <td>
                       <span className="badge">{categoryByInstance.get(c.instance_name ?? '') ?? '—'}</span>
                     </td>
-                    <td className="muted">{fmtDate(c.last_message_at)}</td>
+                    <td className="muted">
+                      {fmtDate(c.last_message_at)}
+                      {c.last_message_from === 'me' && (
+                        <span
+                          className="last-from"
+                          title="Central falou por último (aguardando resposta)"
+                        >
+                          →
+                        </span>
+                      )}
+                      {c.last_message_from === 'contact' && (
+                        <span className="last-from" title="Contato falou por último">
+                          ←
+                        </span>
+                      )}
+                    </td>
                     <td>{c.status ?? <span className="muted">—</span>}</td>
                     <td>{c.encaminhamento ?? <span className="muted">—</span>}</td>
-                    <td>{c.temperatura ?? <span className="muted">—</span>}</td>
+                    <td>
+                      {c.temperatura ?? <span className="muted">—</span>}
+                      {c.temperatura_sugerida && (
+                        <span
+                          className={`sugestao sugestao-${c.temperatura_sugerida}`}
+                          title="Sugestão automática (derivada dos sinais da conversa)"
+                        >
+                          sug. {c.temperatura_sugerida}
+                        </span>
+                      )}
+                    </td>
                     <td>
                       {c.responsavel ?? responsavelByInstance.get(c.instance_name ?? '') ?? (
                         <span className="muted">—</span>
