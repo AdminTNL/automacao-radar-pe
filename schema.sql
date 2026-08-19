@@ -63,7 +63,7 @@ create table if not exists radar_pe_contacts (
   first_message_at   timestamptz,
   last_message_at    timestamptz,             -- última atividade (pro front ordenar por quentura)
   last_message_from   text check (last_message_from in ('me','contact')),  -- quem falou por último (automático)
-  temperatura_sugerida text check (temperatura_sugerida in ('frio','morno','quente')),  -- sugestão automática (só leitura)
+  temperatura_sugerida text check (temperatura_sugerida in ('frio','morno','quente','esfriou')),  -- sugestão automática (só leitura)
   comunidade         text,                    -- cruzamento (depois)
   municipio          text,                    -- cruzamento (depois)
   temperatura        text,                    -- humano
@@ -93,7 +93,33 @@ alter table radar_pe_contacts
     check (last_message_from in ('me','contact'));
 alter table radar_pe_contacts
   add column if not exists temperatura_sugerida text
-    check (temperatura_sugerida in ('frio','morno','quente'));
+    check (temperatura_sugerida in ('frio','morno','quente','esfriou'));
+
+-- Migração p/ bancos onde o CHECK de temperatura_sugerida já existia com os 3
+-- valores antigos ('frio','morno','quente'): dropa o check atual (qualquer nome)
+-- e recria com 'esfriou' incluído. Idempotente.
+do $$
+declare
+  v_cname text;
+begin
+  select con.conname into v_cname
+  from pg_constraint con
+  join pg_class rel on rel.oid = con.conrelid
+  join pg_namespace ns on ns.oid = rel.relnamespace
+  join pg_attribute a on a.attrelid = con.conrelid and a.attnum = any(con.conkey)
+  where ns.nspname = 'public'
+    and rel.relname = 'radar_pe_contacts'
+    and a.attname = 'temperatura_sugerida'
+    and con.contype = 'c';
+
+  if v_cname is not null then
+    execute format('alter table radar_pe_contacts drop constraint %I', v_cname);
+  end if;
+end $$;
+
+alter table radar_pe_contacts
+  add constraint radar_pe_contacts_temperatura_sugerida_check
+    check (temperatura_sugerida in ('frio','morno','quente','esfriou'));
 
 -- 1 contato por conversa (chave mestre = chat_id, 1:1 com radar_pe_chats).
 create unique index if not exists radar_pe_contacts_chat_id_key on radar_pe_contacts (chat_id);
@@ -221,11 +247,21 @@ create trigger radar_pe_cases_touch_trigger
 -- ---------------------------------------------------------------------------
 
 -- Calcula e grava os sinais mecânicos de UM contato a partir do messages do chat.
--- Regra (1ª passagem, calibrável com a Maíra):
+-- Regra (score determinístico, calibrável com a Maíra):
 --   last_message_from   = from_me da última mensagem ('me' | 'contact' | null)
---   temperatura_sugerida: frio (contato nunca respondeu) / quente (respondeu com
---     mídia E não foi resposta única) / morno (demais). null quando não há messages.
--- A mídia é inferida pelo token [audio]/[imagem]/... no body (a captação não guarda o type).
+--   temperatura_sugerida = frio / morno / quente / esfriou, derivada de um score de
+--     engajamento (responder, mídia, perguntas, vai-e-vem, tamanho do texto)
+--     amortecido por um decay de recência ("esfriou" quando parou de responder).
+--   null quando não há messages.
+-- A mídia é inferida pelo token [audio]/[imagem]/... no body (a captação não guarda o type;
+-- mídia com legenda escapa — limitação conhecida).
+--
+-- Constantes calibráveis:
+--   pesos: 1×min(n_contact,5) + 3×n_media + 2×n_perguntas + 1×min(n_turnos,5)
+--          + 1×min(avg_len/40, 3)
+--   decay (dias desde a última msg do contato): <=3=1.0 / <=7=0.7 / <=14=0.5 /
+--          <=30=0.3 / mais=0.15
+--   limiares: quente >= 6 · esfriou < 2 (senão morno) · frio = nunca respondeu
 create or replace function radar_pe_set_contact_signals(p_chat_id uuid)
 returns void
 language plpgsql
@@ -233,11 +269,21 @@ security invoker
 set search_path = public
 as $$
 declare
-  v_msg_count       integer;
-  v_n_contact       integer;
-  v_n_contact_media integer;
-  v_last_from       text;
-  v_temp            text;
+  v_msg_count        integer;
+  v_n_contact        integer;
+  v_n_contact_media  integer;
+  v_n_contact_q      integer;
+  v_n_contact_text   integer;
+  v_sum_contact_len  integer;
+  v_n_turns          integer;
+  v_last_from        text;
+  v_last_contact_at  timestamptz;
+  v_age_days         numeric;
+  v_avg_len          numeric;
+  v_engagement       numeric;
+  v_decay            numeric;
+  v_score            numeric;
+  v_temp             text;
 begin
   perform set_config('radar_pe.is_auto', 'on', true);
 
@@ -266,15 +312,73 @@ begin
     count(*) filter (
       where (m->>'from_me')::boolean = false
         and (m->>'body') ~ '^\[(audio|imagem|video|figurinha|documento|localizacao)\]$'
-    )
-  into v_n_contact, v_n_contact_media
+    ),
+    count(*) filter (
+      where (m->>'from_me')::boolean = false
+        and (m->>'body') like '%?%'
+    ),
+    count(*) filter (
+      where (m->>'from_me')::boolean = false
+        and (m->>'body') !~ '^\['
+    ),
+    coalesce(sum(length(m->>'body')) filter (
+      where (m->>'from_me')::boolean = false
+        and (m->>'body') !~ '^\['
+    ), 0),
+    max((m->>'ts')::timestamptz) filter (where (m->>'from_me')::boolean = false)
+  into v_n_contact, v_n_contact_media, v_n_contact_q, v_n_contact_text,
+       v_sum_contact_len, v_last_contact_at
   from radar_pe_chats c
   left join lateral jsonb_array_elements(c.messages) m on true
   where c.id = p_chat_id;
 
+  -- 3. turnos (alternâncias me <-> contato)
+  select coalesce(count(*) filter (
+           where prev_me is not null and prev_me is distinct from me
+         ), 0)
+    into v_n_turns
+  from (
+    select (m->>'from_me')::boolean as me,
+           lag((m->>'from_me')::boolean) over (order by ord) as prev_me
+    from radar_pe_chats c
+    left join lateral jsonb_array_elements(c.messages) with ordinality as t(m, ord) on true
+    where c.id = p_chat_id
+  ) s;
+
+  -- 4. score de engajamento (pesos calibráveis)
+  v_avg_len := case
+    when v_n_contact_text > 0 then v_sum_contact_len::numeric / v_n_contact_text
+    else 0
+  end;
+
+  v_engagement :=
+      least(v_n_contact, 5)
+    + 3 * v_n_contact_media
+    + 2 * v_n_contact_q
+    + least(v_n_turns, 5)
+    + least(round(v_avg_len / 40, 2), 3.0);
+
+  -- 5. decay por recência (esfriou)
+  if v_last_contact_at is null then
+    v_decay := 1.0;
+  else
+    v_age_days := extract(epoch from (now() - v_last_contact_at)) / 86400.0;
+    v_decay := case
+      when v_age_days <= 3  then 1.0
+      when v_age_days <= 7  then 0.7
+      when v_age_days <= 14 then 0.5
+      when v_age_days <= 30 then 0.3
+      else 0.15
+    end;
+  end if;
+
+  v_score := v_engagement * v_decay;
+
+  -- 6. mapeamento pro rótulo (limiares calibráveis)
   v_temp := case
     when v_n_contact = 0 then 'frio'
-    when v_n_contact_media >= 1 and v_n_contact >= 2 then 'quente'
+    when v_score >= 6   then 'quente'
+    when v_score < 2    then 'esfriou'
     else 'morno'
   end;
 

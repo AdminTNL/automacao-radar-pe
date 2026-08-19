@@ -150,7 +150,7 @@ wrangler deploy
 - [X] Etapa 1 — captação (backfill + diário + health)
 - [ ] Etapa 1 (otimização p/ produção) — diário em bulk por instância + skip de inativos; índice no `findChats`
 - [X] Etapa 2a — registro mecânico em `radar_pe_contacts` (upsert via `radar_pe_upsert_chat` + `radar_pe_backfill_contacts`)
-- [X] Etapa 2b (sinais mecânicos) — `last_message_from` + `temperatura_sugerida` (1ª passagem determinística)
+- [X] Etapa 2b (sinais mecânicos) — `last_message_from` + `temperatura_sugerida` (score determinístico + decay)
 - [X] Etapa 2b (casos) — critério fraseado + `radar_pe_cases` + aprovação no front (aba "Casos")
 - [X] Etapa 2b (tempo real) — webhook global + `radar_pe_append_message` (SLA de segundos)
 - [ ] Etapa 2b (critério fino) — status/encaminhamento/`sent_to_radar` (com a Maíra)

@@ -9,7 +9,7 @@ Consolida o que já está implementado (Etapas 1 e 2a) e o desenho proposto para
 | --- | --- |
 | 1 — captação (backfill + diário + health) | ✅ feito |
 | 2a — registro mecânico em `radar_pe_contacts` | ✅ feito |
-| 2b — sinais mecânicos (`last_message_from` + `temperatura_sugerida`) | ✅ feito (1ª passagem, calibrável) |
+| 2b — sinais mecânicos (`last_message_from` + `temperatura_sugerida`) | ✅ feito (score determinístico + decay, calibrável) |
 | 2b — casos (`radar_pe_cases`: critério fraseado + aprovação no front) | ✅ feito (1ª passagem) |
 | 2b — tempo real (webhook global + `radar_pe_append_message`) | ✅ feito |
 | 2b — critério fino refinado (status / encaminhamento / Maíra) | ⏳ desenho abaixo |
@@ -62,7 +62,7 @@ O `responsavel` da sessão preenche dinamicamente o "responsável" exibido nos c
 **Implementado:**
 
 - `last_message_from` (`'me' | 'contact' | null`) — sinal mecânico "quem falou por último" (alimenta status/aguardando resposta).
-- `temperatura_sugerida` (`'frio' | 'morno' | 'quente'`) — sugestão automática, só leitura no front. O `temperatura` é do time.
+- `temperatura_sugerida` (`'frio' | 'morno' | 'quente' | 'esfriou'`) — sugestão automática, só leitura no front. O `temperatura` é do time.
 
 ### `radar_pe_case_phrases` — frases-gatilho (critério 1ª passagem)
 `id`, `phrase` (única), `active`, `created_at`. Seed com as frases de "encaminhamento/compromisso" (ex.: "Obrigado por compartilhar", "Vou verificar", "Vou levar esse tema"). Editável pela equipe via SQL sem redeploy. Segue útil mesmo quando a IA assumir o critério — vira sinal de entrada/rótulo explicável.
@@ -83,11 +83,12 @@ Definida como **info geral do contato**, mantida pelo time, com sugestão autom�
 | Frio | central manda mensagem, pessoa não responde |
 | Morno | central manda, pessoa responde sem puxar assunto |
 | Quente | central manda, pessoa responde, usa mídia etc. |
+| Esfriou | respondeu, mas parou/tempo passou (antes morno/quente que decaiu) |
 
-- Automação calcula `temperatura_sugerida` a partir de sinais mecânicos (respondeu?, mídia?, nº msgs).
+- Automação calcula `temperatura_sugerida` a partir de sinais mecânicos (respondeu?, mídia?, perguntas?, vai-e-vem, tamanho do texto, recência).
 - O time confirma/ajusta o `temperatura` no front (dono do valor).
 
-### Regra mecânica (1ª passagem, determinística)
+### Regra mecânica (score determinístico, calibrável)
 
 Sinais derivados de `radar_pe_chats.messages` (SQL puro, sem re-backfill):
 
@@ -96,17 +97,30 @@ Sinais derivados de `radar_pe_chats.messages` (SQL puro, sem re-backfill):
 | `last_message_from` | `from_me` da última mensagem (`'me' | 'contact' | null`) |
 | `n_contact` | nº de mensagens do contato (`from_me = false`) |
 | `n_contact_media` | nº de mensagens do contato com token de mídia (`[audio]`, `[imagem]`, `[video]`, `[figurinha]`, `[documento]`, `[localizacao]`) |
+| `n_contact_q` | nº de mensagens do contato com `?` (puxa assunto) |
+| `n_contact_text` / `sum_contact_len` | nº / soma de caracteres das mensagens de texto do contato (fora mídia) |
+| `n_turns` | alternâncias `me`↔`contato` (vai-e-vem) |
+| `last_contact_at` | `ts` da última mensagem do contato (base do decay) |
 
 ```
-frio   = n_contact = 0                          (central falou, ninguém respondeu)
-quente = n_contact_media >= 1 AND n_contact >= 2  (respondeu com mídia E não foi resposta única)
-morno  = senão                                    (respondeu texto, ou mídia única e sumiu)
-null   = chat sem messages
+engajamento = 1×min(n_contact,5) + 3×n_contact_media + 2×n_contact_q
+              + 1×min(n_turns,5) + 1×min(avg_len/40, 3)
+
+decay (dias desde a última msg do contato):
+  <=3=1.0 · <=7=0.7 · <=14=0.5 · <=30=0.3 · mais=0.15
+
+score = engajamento × decay
+
+frio    = n_contact = 0          (central falou, ninguém respondeu)
+quente  = score >= 6
+esfriou = n_contact > 0 E score < 2   (respondeu, mas parou/tempo passou)
+morno   = senão
+null    = chat sem messages
 ```
 
-- **Recência fica fora** da temperatura: papel de `last_message_at` (ordenação do dash) e `last_message_from` (aguardando resposta). "Esfriou/resolvido" é da camada fina.
+- **Recência agora entra** via `decay`, produzindo o rótulo `esfriou` em vez de rebaixar pra `frio` (que fica reservado a "nunca respondeu"). `last_message_at` segue ordenando o dash e `last_message_from` segue indicando "aguardando resposta".
 - **Limite conhecido:** mídia com legenda escapa (a captação não guarda o `type` do `message`); melhoria futura = gravar `type` no `messages` (re-backfill).
-- **Calibração:** os limiares (ex.: `n_contact >= 2`) são a ser validados com a Maíra contra a referência dos 15 casos.
+- **Calibração:** os pesos, o decay e os limiares (ex.: `quente >= 6`) são a ser validados com a Maíra contra a referência dos 15 casos.
 
 ## Pipeline de identificação de caso (Etapa 2b → 3)
 

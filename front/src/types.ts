@@ -26,7 +26,7 @@ export interface Contact {
   first_message_at: string | null
   last_message_at: string | null
   last_message_from: 'me' | 'contact' | null
-  temperatura_sugerida: 'frio' | 'morno' | 'quente' | null
+  temperatura_sugerida: 'frio' | 'morno' | 'quente' | 'esfriou' | null
   comunidade: string | null
   municipio: string | null
   temperatura: string | null

@@ -198,7 +198,7 @@ GROUP BY temperatura_sugerida
 ORDER BY contatos DESC;
 ```
 
-Esperado: valores `frio`/`morno`/`quente` (e alguns `null` p/ chats sem `messages`). A proporção é referência pra calibrar com a Maíra.
+Esperado: valores `frio`/`morno`/`quente`/`esfriou` (e alguns `null` p/ chats sem `messages`). A proporção é referência pra calibrar com a Maíra.
 
 ## 19. `last_message_from` bate com a última mensagem do chat
 
@@ -224,7 +224,15 @@ SELECT k.contact_name,
        count(*) FILTER (
          WHERE (m->>'from_me')::boolean = false
            AND (m->>'body') ~ '^\[(audio|imagem|video|figurinha|documento|localizacao)\]$'
-       ) AS n_contact_media
+       ) AS n_contact_media,
+       count(*) FILTER (
+         WHERE (m->>'from_me')::boolean = false
+           AND (m->>'body') LIKE '%?%'
+       ) AS n_contact_q,
+       coalesce(sum(length(m->>'body')) FILTER (
+         WHERE (m->>'from_me')::boolean = false AND (m->>'body') !~ '^\['
+       ), 0) AS sum_contact_len,
+       now() - max((m->>'ts')::timestamptz) FILTER (WHERE (m->>'from_me')::boolean = false) AS desde_ultima_resposta
 FROM radar_pe_contacts k
 JOIN radar_pe_chats c ON c.id = k.chat_id
 LEFT JOIN LATERAL jsonb_array_elements(c.messages) m ON true
@@ -233,7 +241,21 @@ ORDER BY n_contact_media DESC, n_contact DESC
 LIMIT 50;
 ```
 
-Esperado: `quente` só onde `n_contact_media >= 1` **e** `n_contact >= 2`; `frio` onde `n_contact = 0`; `morno` nos demais.
+Esperado: `quente` nos engajamentos altos (mídia/perguntas/muitas msgs e recente); `esfriou` onde `n_contact > 0` mas a conversa parou faz tempo; `frio` onde `n_contact = 0`; `morno` nos demais.
+
+## 20b. Distribuição cruzando temperatura × recência (calibração)
+
+```sql
+SELECT k.temperatura_sugerida,
+       count(*) AS contatos,
+       count(*) FILTER (WHERE now() - k.last_message_at <= interval '3 days')  AS recentes_3d,
+       count(*) FILTER (WHERE now() - k.last_message_at > interval '14 days') AS parados_14d
+FROM radar_pe_contacts k
+GROUP BY k.temperatura_sugerida
+ORDER BY k.temperatura_sugerida;
+```
+
+Esperado: `esfriou` concentrado em `parados_14d`; `quente` concentrado em `recentes_3d`. Se `esfriou` tiver muita conversa recente (ou `quente` muita parada), ajustar o decay/limiares em `radar_pe_set_contact_signals`.
 
 ## 21. Automação não bumpa `updated_at`
 

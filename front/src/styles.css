@@ -339,6 +339,7 @@ tbody tr:hover {
   border-radius: 999px;
   font-size: 11px;
   font-weight: 500;
+  white-space: nowrap;
   color: var(--muted);
   background: rgba(139, 148, 158, 0.12);
 }
@@ -356,6 +357,11 @@ tbody tr:hover {
 .sugestao-quente {
   color: #ff7b72;
   background: var(--danger-bg);
+}
+
+.sugestao-esfriou {
+  color: #9db5d2;
+  background: rgba(157, 181, 210, 0.15);
 }
 
 .cell-btn {

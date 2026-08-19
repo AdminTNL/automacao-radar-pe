@@ -287,14 +287,15 @@ export default function ContactsTab({ instances }: ContactsTabProps) {
                     <td>{c.status ?? <span className="muted">—</span>}</td>
                     <td>{c.encaminhamento ?? <span className="muted">—</span>}</td>
                     <td>
-                      {c.temperatura ?? <span className="muted">—</span>}
-                      {c.temperatura_sugerida && (
+                      {c.temperatura_sugerida ? (
                         <span
                           className={`sugestao sugestao-${c.temperatura_sugerida}`}
                           title="Sugestão automática (derivada dos sinais da conversa)"
                         >
-                          sug. {c.temperatura_sugerida}
+                          {c.temperatura_sugerida}
                         </span>
+                      ) : (
+                        <span className="muted">—</span>
                       )}
                     </td>
                     <td>
