@@ -32,6 +32,7 @@ Evolution (Postgres, cred "admin evo")  ──►  n8n  ──►  Supabase (rad
 | `n8n/03_diario_instancia.json` | Sub: captura incremental (só mensagens novas) de UMA instância |
 | `n8n/04_diario_main.json` | Main: cron diário → lista instâncias → chama 03 |
 | `n8n/05_health.json` | Cron diário: checa `connectionState` e marca sessões offline |
+| `n8n/06_radar_mensagem.json` | Sub: captura 1 mensagem "ao vivo" (webhook) — append + sinais + detecção |
 | `queries_validacao.md` | Queries pra conferir o resultado do backfill |
 | `arquitetura.md` | Desenho técnico (estado atual + Etapas 2b/3) pra alinhamento com o time |
 | `front/` | CRM básico (Vite + React + TS) pra ver/editar `radar_pe_contacts` |
@@ -64,11 +65,20 @@ Evolution (Postgres, cred "admin evo")  ──►  n8n  ──►  Supabase (rad
 - **Trigger:** Schedule (cron `0 9 * * *`).
 - **Fluxo:** `Get Instances` → `Loop Instances` → `Connection State` (REST Evolution) → `Extract State` → `Mark Health` (Supabase).
 
+### 06 — Radar Mensagem (sub, tempo real)
+
+- **Trigger:** Execute Workflow Trigger (recebe o evento `messages.upsert` do webhook global).
+- **Fluxo:** `Parse Mensagem` (Code: filtra 1:1, canonicaliza jid, extrai body, descarta status/trivial) → `Append Mensagem` (Supabase, RPC `radar_pe_append_message`).
+- **Como liga:** é chamado pelo fluxo global do n8n (`Webhook1` em `webhookn8n.tnledu.shop/webhook/evolution-connection`) via um nó `If` (`body.event == 'messages.upsert'`) + `Call`.
+
 ## Modelo de dados (Supabase)
 
 - **`radar_pe_instances`** — sessões (`name`, `category`, `connection_state`, `offline`). Seed manual.
+- **`radar_pe_responsaveis`** — lista de responsáveis (gerenciável no front), usada pra atribuir nas sessões.
 - **`radar_pe_chats`** — um por contato/conversa (`instance_name`, `remote_jid`, `contact_name`, `transcript`, `checkpoint`, ...). Único por `(instance_name, remote_jid)`.
 - **`radar_pe_contacts`** — registro de negócio ("todos os contatos"), com os campos da Botando pra Moer.
+- **`radar_pe_case_phrases`** — frases-gatilho do critério (1ª passagem), editável via SQL.
+- **`radar_pe_cases`** — possíveis casos de Radar (1 contato → N casos): fragmento congelado + aprovação do time.
 
 ### Por que o `radar_pe_chats` existe?
 
@@ -92,6 +102,7 @@ Em resumo: **Evolution** = fonte da verdade · **`radar_pe_chats`** = cópia de 
 | Nome / Telefone / Contato inicial / Sessão | automático (preenchido só quando vazio; editável pelo time sem ser sobrescrito) |
 | Comunidade / Município | cruzamento (futuro) |
 | Temperatura / Teor / Responsável / Observação | humano (IA depois) |
+| `temperatura_sugerida` / `last_message_from` | automático (sinais mecânicos; só leitura) |
 | Status / Encaminhamento / `sent_to_radar` | critério (Etapa 2) |
 
 > `radar_pe_contacts` é a tabela operacional (tipo CRM) que o time consulta/edita no front.
@@ -108,21 +119,40 @@ Em resumo: **Evolution** = fonte da verdade · **`radar_pe_chats`** = cópia de 
 
 1. Rodar `schema.sql` no Supabase.
 2. Seedar `radar_pe_instances` só com as sessões de PE (nome exato, com acento/espaço).
-3. Importar os 5 JSONs no n8n.
-4. Conectar credenciais: Postgres `admin evo` (nós `Find Chats`/`Find Messages`), Supabase (`Supabase account`), Evolution (health), e selecionar os sub-workflows nos mains.
-5. Front: `cd front && npm install`, copiar `.env.example` → `.env` e preencher `VITE_SUPABASE_URL` + `VITE_SUPABASE_SERVICE_ROLE_KEY`, depois `npm run dev`.
+3. Em base com dados já capturados, rodar uma vez: `select radar_pe_backfill_signals();` e `select radar_pe_detect_cases();` (preenche sinais e casos do histórico).
+4. Importar os 5 JSONs no n8n.
+5. Conectar credenciais: Postgres `admin evo` (nós `Find Chats`/`Find Messages`), Supabase (`Supabase account`), Evolution (health), e selecionar os sub-workflows nos mains.
+6. Front: `cd front && npm install`, depois `npm run dev:full` (build + Worker local) ou `npm run dev` (Vite) com `wrangler dev` rodando em paralelo. Para local, copiar `.env.example` → `.dev.vars` e preencher os segredos.
 
 ## Front (CRM básico)
 
-- Vite + React + TS, falando direto com o Supabase via `@supabase/supabase-js`.
+- Vite + React + TS. O front fala com o Supabase **via Worker do Cloudflare** (`/api/db` faz proxy), nunca direto.
+- Abas: **Contatos** (lista/edita `radar_pe_contacts`), **Sessões** (gerencia instâncias + responsáveis) e **Casos pro Radar** (revisa e aprova/descarta possíveis casos; gerencia as frases-gatilho).
 - Lista `radar_pe_contacts` ordenada por `last_message_at` desc, com busca (nome/telefone), filtro por categoria e edição inline de nome/telefone (o trigger `radar_pe_contacts_touch` bumpa `updated_at` na edição).
-- **Auth:** usa service role key (bypassa RLS) — **só pra demo local**. Para compartilhar com o time, trocar por anon key + Supabase Auth + RLS.
+- **Auth:** senha única compartilhada (secret `APP_PASSWORD` no Cloudflare). O Worker checa a senha, emite cookie assinado (`AUTH_SECRET`) e só libera os dados para sessão válida. A service role key fica **só no Worker**, nunca no bundle.
+
+## Deploy (Cloudflare Workers)
+
+```bash
+cd front
+npm run build
+wrangler secret put APP_PASSWORD               # senha de acesso (interativo)
+wrangler secret put AUTH_SECRET                # ex.: openssl rand -base64 32
+wrangler secret put SUPABASE_SERVICE_ROLE_KEY
+wrangler deploy
+```
+
+- `SUPABASE_URL` fica em `vars` no `wrangler.jsonc`.
+- **Login persistente:** o cookie dura 1 ano (teto do browser) e a sessão só expira ao rotacionar o `AUTH_SECRET`. Para trocar a senha (e derrubar todo mundo): `wrangler secret put APP_PASSWORD` **e** `wrangler secret put AUTH_SECRET`.
 
 ## Roadmap
 
 - [X] Etapa 1 — captação (backfill + diário + health)
 - [ ] Etapa 1 (otimização p/ produção) — diário em bulk por instância + skip de inativos; índice no `findChats`
 - [X] Etapa 2a — registro mecânico em `radar_pe_contacts` (upsert via `radar_pe_upsert_chat` + `radar_pe_backfill_contacts`)
-- [ ] Etapa 2b — critério status/encaminhamento/`sent_to_radar` (com a Maíra)
+- [X] Etapa 2b (sinais mecânicos) — `last_message_from` + `temperatura_sugerida` (1ª passagem determinística)
+- [X] Etapa 2b (casos) — critério fraseado + `radar_pe_cases` + aprovação no front (aba "Casos")
+- [X] Etapa 2b (tempo real) — webhook global + `radar_pe_append_message` (SLA de segundos)
+- [ ] Etapa 2b (critério fino) — status/encaminhamento/`sent_to_radar` (com a Maíra)
 - [ ] Etapa 3 — alimentar Radar Mobiliza PE (Notion)
 - [ ] Calibração (2–3 rodadas) + trocar frase do painel de campo

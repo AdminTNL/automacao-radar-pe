@@ -179,6 +179,78 @@ Esperado: `0` (o append com dedup por `msg_id` não pode duplicar).
 
 ---
 
+# Etapa 2b — sinais mecânicos (`last_message_from` + `temperatura_sugerida`)
+
+Rodar após aplicar o `schema.sql` e **uma vez** o backfill dos sinais:
+
+```sql
+select radar_pe_backfill_signals();
+```
+
+(a partir daí o `radar_pe_upsert_chat` mantém os sinais frescos a cada captação.)
+
+## 18. Distribuição da `temperatura_sugerida`
+
+```sql
+SELECT temperatura_sugerida, count(*) AS contatos
+FROM radar_pe_contacts
+GROUP BY temperatura_sugerida
+ORDER BY contatos DESC;
+```
+
+Esperado: valores `frio`/`morno`/`quente` (e alguns `null` p/ chats sem `messages`). A proporção é referência pra calibrar com a Maíra.
+
+## 19. `last_message_from` bate com a última mensagem do chat
+
+```sql
+SELECT count(*) AS inconsistentes
+FROM radar_pe_contacts k
+JOIN radar_pe_chats c ON c.id = k.chat_id
+WHERE c.messages IS NOT NULL
+  AND jsonb_array_length(c.messages) > 0
+  AND k.last_message_from IS DISTINCT FROM
+      CASE WHEN (c.messages->-1->>'from_me')::boolean THEN 'me' ELSE 'contact' END;
+```
+
+Esperado: `0`.
+
+## 20. Sinais por contato (base pra calibrar a regra)
+
+```sql
+SELECT k.contact_name,
+       k.temperatura_sugerida,
+       k.last_message_from,
+       count(*) FILTER (WHERE (m->>'from_me')::boolean = false) AS n_contact,
+       count(*) FILTER (
+         WHERE (m->>'from_me')::boolean = false
+           AND (m->>'body') ~ '^\[(audio|imagem|video|figurinha|documento|localizacao)\]$'
+       ) AS n_contact_media
+FROM radar_pe_contacts k
+JOIN radar_pe_chats c ON c.id = k.chat_id
+LEFT JOIN LATERAL jsonb_array_elements(c.messages) m ON true
+GROUP BY k.id, k.contact_name, k.temperatura_sugerida, k.last_message_from
+ORDER BY n_contact_media DESC, n_contact DESC
+LIMIT 50;
+```
+
+Esperado: `quente` só onde `n_contact_media >= 1` **e** `n_contact >= 2`; `frio` onde `n_contact = 0`; `morno` nos demais.
+
+## 21. Automação não bumpa `updated_at`
+
+Comparar antes/depois de re-rodar `radar_pe_backfill_signals()` (ou o diário) num contato que o time já editou:
+
+```sql
+SELECT id, temperatura_sugerida, last_message_from, updated_at
+FROM radar_pe_contacts
+WHERE updated_at < now() - interval '1 day'
+ORDER BY updated_at DESC
+LIMIT 5;
+```
+
+Esperado: rodar o backfill/diário e conferir que o `updated_at` desses contatos **não** mudou (a escrita é sob `radar_pe.is_auto`).
+
+---
+
 # Dedup `@lid` vs `@s.whatsapp.net`
 
 Rodar após aplicar o `schema.sql` (canonicalização na captação) e **uma vez** o merge:
@@ -246,3 +318,145 @@ WHERE k.remote_jid LIKE '%@lid'
 ```
 
 Esperado: `0` por enquanto (não houve edição manual). Se aparecer algo, revisar antes de apagar.
+
+---
+
+# Etapa 2b — casos de Radar (`radar_pe_cases`)
+
+Rodar após aplicar o `schema.sql` e **uma vez** a detecção do histórico:
+
+```sql
+select radar_pe_detect_cases();
+```
+
+(a partir daí o `radar_pe_upsert_chat` detecta casos novos a cada captação.)
+
+## 22. Total e distribuição por status
+
+```sql
+SELECT status, count(*) AS casos
+FROM radar_pe_cases
+GROUP BY status
+ORDER BY casos DESC;
+```
+
+Esperado: casos `pendente` recém-detectados; `aprovado`/`descartado` conforme o time foi revisando.
+
+## 23. Distribuição por frase-gatilho
+
+```sql
+SELECT matched_phrase, count(*) AS casos
+FROM radar_pe_cases
+GROUP BY matched_phrase
+ORDER BY casos DESC;
+```
+
+Esperado: distribuição coerente com as frases do seed — base pra calibrar/ajustar a lista em `radar_pe_case_phrases`.
+
+## 24. Idempotência: sem duplicata por (chat_id, trigger_msg_id)
+
+```sql
+SELECT count(*) AS duplicatas
+FROM radar_pe_cases
+WHERE trigger_msg_id IS NOT NULL
+GROUP BY chat_id, trigger_msg_id
+HAVING count(*) > 1;
+```
+
+Esperado: `0` (a constraint `unique(chat_id, trigger_msg_id)` impede).
+
+## 25. Amostra de casos (frase + trecho congelado)
+
+```sql
+SELECT contact_name, phone, instance_name, matched_phrase,
+       status, fragment_start_at, fragment_end_at,
+       left(transcript_snapshot, 200) AS trecho
+FROM radar_pe_cases
+ORDER BY created_at DESC
+LIMIT 20;
+```
+
+Esperado: `trecho` com "Eu:"/"Contato:" limitado às últimas ~10 mensagens + o gatilho (termina na mensagem que disparou).
+
+## 26. Quantos contatos geraram casos (1 contato → N casos)
+
+```sql
+SELECT
+  count(DISTINCT chat_id) AS chats_com_caso,
+  count(*) AS casos,
+  round(count(*)::numeric / nullif(count(DISTINCT chat_id), 0), 2) AS casos_por_chat
+FROM radar_pe_cases;
+```
+
+Esperado: proporção baixa (poucos chats viram caso) e `casos_por_chat` ~1 na 1ª passagem.
+
+## 27. Casos de uma conversa inteira viraram caso (checagem de recall)
+
+```sql
+SELECT instance_name, remote_jid, count(*) AS casos
+FROM radar_pe_cases
+GROUP BY instance_name, remote_jid
+HAVING count(*) > 1
+ORDER BY casos DESC
+LIMIT 20;
+```
+
+Esperado: lista das conversas com mais de um caso — revisar manualmente se faz sentido (ou se são o mesmo caso repetido por frases diferentes).
+
+---
+
+# Etapa 2b — tempo real (webhook + `radar_pe_append_message`)
+
+Rodar após aplicar o `schema.sql` e ligar o webhook (fluxo global → `06` → RPC).
+
+## 28. Sessões de PE com caso detectado "ao vivo" (webhook)
+
+Conferir que o append só grava sessões de `radar_pe_instances` (gatekeeper):
+
+```sql
+SELECT c.instance_name, count(*) AS casos
+FROM radar_pe_cases c
+LEFT JOIN radar_pe_instances i ON i.name = c.instance_name
+WHERE i.name IS NULL
+GROUP BY c.instance_name;
+```
+
+Esperado: `0` linhas (nenhum caso de sessão fora de PE).
+
+## 29. Idempotência do append (sem duplicar `msg_id`)
+
+```sql
+SELECT count(*) AS chats_com_duplicata
+FROM radar_pe_chats c
+WHERE c.messages IS NOT NULL
+  AND jsonb_array_length(c.messages) <>
+     (SELECT count(DISTINCT m->>'msg_id') FROM jsonb_array_elements(c.messages) m);
+```
+
+Esperado: `0` (o append dedup por `msg_id`, mesmo com webhook + diário rodando juntos).
+
+## 30. Consistência transcript × messages (append não "pula" linha)
+
+```sql
+SELECT count(*) AS inconsistentes
+FROM radar_pe_chats c
+WHERE c.transcript IS NOT NULL
+  AND (
+    (c.transcript LIKE 'Eu:%' OR c.transcript LIKE 'Contato:%') = false
+  );
+```
+
+Esperado: `0` (toda linha do transcript começa com "Eu:"/"Contato:").
+
+## 31. Latência de ponta a ponta (sanity)
+
+Depois de mandar uma mensagem teste numa sessão PE, conferir que o caso/contato aparece em segundos:
+
+```sql
+SELECT contact_name, phone, last_message_at, last_message_from, temperatura_sugerida
+FROM radar_pe_contacts
+ORDER BY last_message_at DESC
+LIMIT 5;
+```
+
+Esperado: a conversa de teste no topo, com `last_message_at` ~ agora (segundos), sem depender do diário das 8h.

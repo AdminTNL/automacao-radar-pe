@@ -20,6 +20,13 @@ create table if not exists radar_pe_instances (
 alter table radar_pe_instances add column if not exists responsavel text;
 
 -- ---------------------------------------------------------------------------
+-- 1.1 Responsáveis (lista predefinida p/ atribuir nas sessões) — gerenciável pelo front
+-- ---------------------------------------------------------------------------
+create table if not exists radar_pe_responsaveis (
+  name               text primary key        -- nome da pessoa responsável
+);
+
+-- ---------------------------------------------------------------------------
 -- 2. Chats (um por contato/conversa) — camada de captação (Etapa 1)
 -- ---------------------------------------------------------------------------
 create table if not exists radar_pe_chats (
@@ -55,6 +62,8 @@ create table if not exists radar_pe_contacts (
   origem             text,
   first_message_at   timestamptz,
   last_message_at    timestamptz,             -- última atividade (pro front ordenar por quentura)
+  last_message_from   text check (last_message_from in ('me','contact')),  -- quem falou por último (automático)
+  temperatura_sugerida text check (temperatura_sugerida in ('frio','morno','quente')),  -- sugestão automática (só leitura)
   comunidade         text,                    -- cruzamento (depois)
   municipio          text,                    -- cruzamento (depois)
   temperatura        text,                    -- humano
@@ -76,6 +85,15 @@ create index if not exists radar_pe_contacts_remote_jid_idx on radar_pe_contacts
 -- (set not null falha se houver contato com chat_id null — Etapa 2 começa vazia.)
 alter table radar_pe_contacts add column if not exists last_message_at timestamptz;
 alter table radar_pe_contacts alter column chat_id set not null;
+
+-- Sinais mecânicos (Etapa 2b): derivados de radar_pe_chats.messages.
+-- (CHECKs só valem valores não-nulos; null = "sem messages p/ derivar".)
+alter table radar_pe_contacts
+  add column if not exists last_message_from text
+    check (last_message_from in ('me','contact'));
+alter table radar_pe_contacts
+  add column if not exists temperatura_sugerida text
+    check (temperatura_sugerida in ('frio','morno','quente'));
 
 -- 1 contato por conversa (chave mestre = chat_id, 1:1 com radar_pe_chats).
 create unique index if not exists radar_pe_contacts_chat_id_key on radar_pe_contacts (chat_id);
@@ -120,8 +138,235 @@ create trigger radar_pe_contacts_touch_trigger
   for each row execute function radar_pe_contacts_touch();
 
 -- ---------------------------------------------------------------------------
+-- 3.2 Frases-gatilho (critério de caso) e Casos de Radar
+-- ---------------------------------------------------------------------------
+
+-- Critério fraseado (1ª passagem): uma mensagem NOSSA (from_me) que contenha uma
+-- dessas frases vira um possível caso. Editável pela equipe via SQL sem redeploy.
+create table if not exists radar_pe_case_phrases (
+  id         uuid primary key default gen_random_uuid(),
+  phrase     text not null unique,
+  active     boolean not null default true,
+  created_at timestamptz not null default now()
+);
+
+insert into radar_pe_case_phrases (phrase)
+values
+  ('Obrigado por compartilhar'),
+  ('Obrigado pelo seu apoio'),
+  ('Poder contar com seu apoio'),
+  ('Vou compartilhar isso com'),
+  ('Vou checar e'),
+  ('Vou verificar'),
+  ('Vou levar esse tema')
+on conflict (phrase) do nothing;
+
+-- 1 contato → N casos. Cada caso congela um trecho da conversa no momento da
+-- identificação e nunca é sobrescrito pelo desenrolar da conversa.
+create table if not exists radar_pe_cases (
+  id                   uuid primary key default gen_random_uuid(),
+  chat_id              uuid not null references radar_pe_chats(id) on delete cascade,
+  contact_id           uuid references radar_pe_contacts(id) on delete set null,
+  instance_name        text,
+  remote_jid           text,
+  contact_name         text,
+  phone                text,
+  trigger_msg_id       text,                    -- mensagem que disparou (idempotência)
+  matched_phrase       text,                    -- frase que casou
+  fragment_start_at    timestamptz,
+  fragment_end_at      timestamptz,
+  transcript_snapshot  text,                    -- trecho congelado (até N anteriores + gatilho)
+  temperatura_snapshot text,                    -- temperatura_sugerida no momento
+  status               text not null default 'pendente'
+                       check (status in ('pendente','aprovado','descartado','enviado')),
+  sent_to_radar        boolean not null default false,
+  notion_page_id       text,
+  sent_at              timestamptz,
+  created_at           timestamptz not null default now(),
+  updated_at           timestamptz not null default now(),
+  unique (chat_id, trigger_msg_id)
+);
+
+create index if not exists radar_pe_cases_status_idx on radar_pe_cases (status);
+create index if not exists radar_pe_cases_chat_idx on radar_pe_cases (chat_id);
+create index if not exists radar_pe_cases_created_idx on radar_pe_cases (created_at);
+
+-- Toque humano em updated_at: só quando o time aprova/descarta/envia (não a detecção).
+create or replace function radar_pe_cases_touch()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  if coalesce(current_setting('radar_pe.is_auto', true), '') <> 'on'
+     and (
+       new.status         is distinct from old.status
+    or new.sent_to_radar  is distinct from old.sent_to_radar
+    or new.notion_page_id is distinct from old.notion_page_id
+     )
+  then
+    new.updated_at = now();
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists radar_pe_cases_touch_trigger on radar_pe_cases;
+create trigger radar_pe_cases_touch_trigger
+  before update on radar_pe_cases
+  for each row execute function radar_pe_cases_touch();
+
+-- ---------------------------------------------------------------------------
 -- 4. Funções RPC (chamadas via Supabase REST /rest/v1/rpc/*)
 -- ---------------------------------------------------------------------------
+
+-- Calcula e grava os sinais mecânicos de UM contato a partir do messages do chat.
+-- Regra (1ª passagem, calibrável com a Maíra):
+--   last_message_from   = from_me da última mensagem ('me' | 'contact' | null)
+--   temperatura_sugerida: frio (contato nunca respondeu) / quente (respondeu com
+--     mídia E não foi resposta única) / morno (demais). null quando não há messages.
+-- A mídia é inferida pelo token [audio]/[imagem]/... no body (a captação não guarda o type).
+create or replace function radar_pe_set_contact_signals(p_chat_id uuid)
+returns void
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  v_msg_count       integer;
+  v_n_contact       integer;
+  v_n_contact_media integer;
+  v_last_from       text;
+  v_temp            text;
+begin
+  perform set_config('radar_pe.is_auto', 'on', true);
+
+  -- 1. total de mensagens + último remetente (sem agregar)
+  select
+    coalesce(jsonb_array_length(c.messages), 0),
+    case
+      when (c.messages->-1->>'from_me')::boolean is null then null
+      when (c.messages->-1->>'from_me')::boolean then 'me'
+      else 'contact'
+    end
+  into v_msg_count, v_last_from
+  from radar_pe_chats c
+  where c.id = p_chat_id;
+
+  if coalesce(v_msg_count, 0) = 0 then
+    update radar_pe_contacts
+       set last_message_from = null, temperatura_sugerida = null
+     where chat_id = p_chat_id;
+    return;
+  end if;
+
+  -- 2. sinais do contato (agregados sobre as mensagens)
+  select
+    count(*) filter (where (m->>'from_me')::boolean = false),
+    count(*) filter (
+      where (m->>'from_me')::boolean = false
+        and (m->>'body') ~ '^\[(audio|imagem|video|figurinha|documento|localizacao)\]$'
+    )
+  into v_n_contact, v_n_contact_media
+  from radar_pe_chats c
+  left join lateral jsonb_array_elements(c.messages) m on true
+  where c.id = p_chat_id;
+
+  v_temp := case
+    when v_n_contact = 0 then 'frio'
+    when v_n_contact_media >= 1 and v_n_contact >= 2 then 'quente'
+    else 'morno'
+  end;
+
+  update radar_pe_contacts
+     set last_message_from = v_last_from, temperatura_sugerida = v_temp
+   where chat_id = p_chat_id;
+end;
+$$;
+
+-- Detecta possíveis casos de Radar num chat a partir das frases ativas de
+-- radar_pe_case_phrases. Regra (1ª passagem): mensagem nossa (from_me) cujo body
+-- contém uma frase (ILIKE, substring). Congela as últimas v_context_size mensagens
+-- + o gatilho. Idempotente via unique(chat_id, trigger_msg_id).
+create or replace function radar_pe_detect_cases_for_chat(p_chat_id uuid)
+returns void
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  v_context_size integer := 10;  -- nº de mensagens anteriores ao gatilho congeladas
+  v_chat    radar_pe_chats%rowtype;
+  v_contact radar_pe_contacts%rowtype;
+  v_msgs    jsonb;
+  v_total   integer;
+  v_idx     integer;
+  v_trigger jsonb;
+  v_phrase  text;
+  v_from_idx integer;
+  v_ts_start timestamptz;
+  v_ts_end   timestamptz;
+  v_snapshot text;
+begin
+  perform set_config('radar_pe.is_auto', 'on', true);
+
+  select * into v_chat from radar_pe_chats where id = p_chat_id;
+  if not found or v_chat.messages is null or jsonb_array_length(v_chat.messages) = 0 then
+    return;
+  end if;
+
+  select * into v_contact from radar_pe_contacts where chat_id = p_chat_id;
+
+  v_msgs  := v_chat.messages;
+  v_total := jsonb_array_length(v_msgs);
+
+  for v_idx in 0 .. v_total - 1 loop
+    v_trigger := v_msgs->v_idx;
+
+    -- só mensagens nossas, com msg_id (senão a dedup por (chat_id, msg_id) não vale)
+    if (v_trigger->>'from_me')::boolean is not true
+       or (v_trigger->>'msg_id') is null then
+      continue;
+    end if;
+
+    select p.phrase into v_phrase
+    from radar_pe_case_phrases p
+    where p.active
+      and coalesce(v_trigger->>'body', '') ilike '%' || p.phrase || '%'
+    order by length(p.phrase) desc
+    limit 1;
+
+    if v_phrase is null then
+      continue;
+    end if;
+
+    v_from_idx := greatest(0, v_idx - v_context_size);
+    v_ts_start := (v_msgs->v_from_idx->>'ts')::timestamptz;
+    v_ts_end   := (v_trigger->>'ts')::timestamptz;
+
+    select string_agg(
+      case when (m->>'from_me')::boolean then 'Eu' else 'Contato' end || ': ' || (m->>'body'),
+      E'\n' order by ord
+    )
+      into v_snapshot
+    from jsonb_array_elements(v_msgs) with ordinality as t(m, ord)
+    where ord >= v_from_idx + 1 and ord <= v_idx + 1
+      and (m->>'body') is not null and (m->>'body') <> '';
+
+    insert into radar_pe_cases
+      (chat_id, contact_id, instance_name, remote_jid, contact_name, phone,
+       trigger_msg_id, matched_phrase, fragment_start_at, fragment_end_at,
+       transcript_snapshot, temperatura_snapshot)
+    values
+      (v_chat.id, v_contact.id, v_chat.instance_name, v_chat.remote_jid,
+       coalesce(v_contact.contact_name, v_chat.contact_name),
+       coalesce(v_contact.phone, v_chat.phone),
+       v_trigger->>'msg_id', v_phrase, v_ts_start, v_ts_end,
+       v_snapshot, v_contact.temperatura_sugerida)
+    on conflict (chat_id, trigger_msg_id) do nothing;
+  end loop;
+end;
+$$;
 
 -- Upsert de um chat (INSERT ... ON CONFLICT DO UPDATE). Retorna o id do chat.
 create or replace function radar_pe_upsert_chat(
@@ -154,9 +399,12 @@ begin
   on conflict (instance_name, remote_jid) do update
     set contact_name     = coalesce(excluded.contact_name, radar_pe_chats.contact_name),
         phone            = coalesce(excluded.phone, radar_pe_chats.phone),
-        first_message_at = coalesce(excluded.first_message_at, radar_pe_chats.first_message_at),
-        last_message_at  = coalesce(excluded.last_message_at, radar_pe_chats.last_message_at),
-        checkpoint       = coalesce(excluded.checkpoint, radar_pe_chats.checkpoint),
+        first_message_at = least(coalesce(excluded.first_message_at, radar_pe_chats.first_message_at),
+                                 coalesce(radar_pe_chats.first_message_at, excluded.first_message_at)),
+        last_message_at  = greatest(coalesce(excluded.last_message_at, radar_pe_chats.last_message_at),
+                                    coalesce(radar_pe_chats.last_message_at, excluded.last_message_at)),
+        checkpoint       = greatest(coalesce(excluded.checkpoint, radar_pe_chats.checkpoint),
+                                    coalesce(radar_pe_chats.checkpoint, excluded.checkpoint)),
         transcript       = coalesce(excluded.transcript, radar_pe_chats.transcript)
   returning id into v_id;
 
@@ -187,10 +435,134 @@ begin
         remote_jid       = excluded.remote_jid,
         contact_name     = coalesce(excluded.contact_name, radar_pe_contacts.contact_name),
         phone            = coalesce(excluded.phone, radar_pe_contacts.phone),
-        first_message_at = coalesce(radar_pe_contacts.first_message_at, excluded.first_message_at),
-        last_message_at  = coalesce(excluded.last_message_at, radar_pe_contacts.last_message_at);
+        first_message_at = least(coalesce(excluded.first_message_at, radar_pe_contacts.first_message_at),
+                                 coalesce(radar_pe_contacts.first_message_at, excluded.first_message_at)),
+        last_message_at  = greatest(coalesce(excluded.last_message_at, radar_pe_contacts.last_message_at),
+                                    coalesce(radar_pe_contacts.last_message_at, excluded.last_message_at));
+
+  -- Sinais mecânicos sempre frescos após cada escrita (backfill e diário).
+  perform radar_pe_set_contact_signals(v_id);
+  -- Detecção de casos também roda aqui (idempotente), mantendo a lista sempre em dia.
+  perform radar_pe_detect_cases_for_chat(v_id);
 
   return v_id;
+end;
+$$;
+
+-- Append incremental de UMA mensagem (caminho do webhook "ao vivo"). Cria o chat/contato
+-- se for conversa nova, faz append da mensagem (dedup por msg_id, sort por ts) e da linha
+-- no transcript, atualiza first/last/checkpoint monotônicos e roda sinais + detecção.
+-- Gatekeeper: ignora sessões fora de radar_pe_instances (o webhook global recebe evento
+-- de todas as sessões; só PE interessa). Idempotente (msg_id duplicada não re-apenda).
+create or replace function radar_pe_append_message(
+  p_instance_name text,
+  p_remote_jid    text,
+  p_contact_name  text,
+  p_phone         text,
+  p_ts            timestamptz,
+  p_from_me       boolean,
+  p_body          text,
+  p_msg_id        text
+) returns void
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  v_id     uuid;
+  v_is_dup boolean;
+  v_line   text;
+begin
+  -- só sessões de PE (fonte de verdade = radar_pe_instances, a mesma do diário)
+  if not exists (select 1 from radar_pe_instances where name = p_instance_name) then
+    return;
+  end if;
+
+  -- ignora sem conteúdo real (status/ack chegam como "." ou vazio)
+  if p_body is null or btrim(p_body) in ('', '.') then
+    return;
+  end if;
+
+  perform set_config('radar_pe.is_auto', 'on', true);
+
+  -- cria o chat se ainda não existir (conversa nova).
+  -- nome só vem de mensagem RECEBIDA (mensagem nossa traz o nome da própria sessão)
+  insert into radar_pe_chats (instance_name, remote_jid, contact_name, phone)
+  values (p_instance_name, p_remote_jid,
+          case when p_from_me then null else p_contact_name end,
+          p_phone)
+  on conflict (instance_name, remote_jid) do nothing;
+
+  select id into v_id
+  from radar_pe_chats
+  where instance_name = p_instance_name and remote_jid = p_remote_jid;
+
+  -- já temos essa mensagem? (dedup por msg_id)
+  select exists (
+    select 1
+    from jsonb_array_elements(coalesce((select messages from radar_pe_chats where id = v_id), '[]'::jsonb)) m
+    where m->>'msg_id' = p_msg_id
+  ) into v_is_dup;
+
+  -- append da mensagem + da linha do transcript (só se for nova)
+  if not v_is_dup then
+    v_line := case when p_from_me then 'Eu' else 'Contato' end || ': ' || p_body;
+
+    update radar_pe_chats
+       set messages   = coalesce((
+             select jsonb_agg(m order by (m->>'ts')::timestamptz)
+             from (
+               select distinct on (m->>'msg_id') m
+               from jsonb_array_elements(coalesce(radar_pe_chats.messages, '[]'::jsonb)
+                     || jsonb_build_array(jsonb_build_object(
+                          'ts', p_ts, 'from_me', p_from_me, 'body', p_body, 'msg_id', p_msg_id))) as e(m)
+             ) d
+           ), '[]'::jsonb),
+           transcript = case
+             when radar_pe_chats.transcript is null or radar_pe_chats.transcript = '' then v_line
+             else radar_pe_chats.transcript || E'\n' || v_line
+           end
+     where id = v_id;
+  end if;
+
+  -- nome/telefone (system wins quando não vazio) + first/last/checkpoint monotônicos.
+  -- nome não é atualizado por mensagem nossa (só mensagem recebida carrega nome do contato)
+  update radar_pe_chats
+     set contact_name     = case
+           when p_from_me then contact_name
+           else coalesce(nullif(p_contact_name, ''), contact_name)
+         end,
+         phone            = coalesce(nullif(p_phone, ''), phone),
+         first_message_at = least(coalesce(p_ts, first_message_at), coalesce(first_message_at, p_ts)),
+         last_message_at  = greatest(coalesce(p_ts, last_message_at), coalesce(last_message_at, p_ts)),
+         checkpoint       = greatest(coalesce(p_ts, checkpoint), coalesce(checkpoint, p_ts))
+   where id = v_id;
+
+  -- upsert do contato (registro de negócio)
+  insert into radar_pe_contacts
+    (chat_id, instance_name, remote_jid, contact_name, phone, first_message_at, last_message_at)
+  values
+    (v_id, p_instance_name, p_remote_jid,
+     case when p_from_me then null else p_contact_name end,
+     p_phone, p_ts, p_ts)
+  on conflict (chat_id) do update
+    set instance_name    = excluded.instance_name,
+        remote_jid       = excluded.remote_jid,
+        contact_name     = case
+          when p_from_me then radar_pe_contacts.contact_name
+          else coalesce(excluded.contact_name, radar_pe_contacts.contact_name)
+        end,
+        phone            = coalesce(excluded.phone, radar_pe_contacts.phone),
+        first_message_at = least(coalesce(excluded.first_message_at, radar_pe_contacts.first_message_at),
+                                 coalesce(radar_pe_contacts.first_message_at, excluded.first_message_at)),
+        last_message_at  = greatest(coalesce(excluded.last_message_at, radar_pe_contacts.last_message_at),
+                                    coalesce(radar_pe_contacts.last_message_at, excluded.last_message_at));
+
+  -- sinais sempre frescos; detecção só faz sentido em mensagem nossa (frases-gatilho)
+  perform radar_pe_set_contact_signals(v_id);
+  if p_from_me then
+    perform radar_pe_detect_cases_for_chat(v_id);
+  end if;
 end;
 $$;
 
@@ -213,6 +585,49 @@ begin
   where not exists (select 1 from radar_pe_contacts k where k.chat_id = c.id);
 
   get diagnostics v_count = row_count;
+  return v_count;
+end;
+$$;
+
+-- Recalcula os sinais mecânicos (last_message_from + temperatura_sugerida) de todos
+-- os contatos a partir do messages do chat. Idempotente. Rode uma vez após aplicar o
+-- schema da Etapa 2b, e depois de qualquer merge que mexa em messages. Retorna quantos chats processou.
+create or replace function radar_pe_backfill_signals()
+returns integer
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  r record;
+  v_count integer := 0;
+begin
+  for r in select id from radar_pe_chats loop
+    perform radar_pe_set_contact_signals(r.id);
+    v_count := v_count + 1;
+  end loop;
+
+  return v_count;
+end;
+$$;
+
+-- Detecta casos de Radar em todos os chats (histórico). Idempotente. Rode uma vez
+-- após aplicar o schema da Etapa 2b, e depois de ajustar as frases. Retorna quantos chats processou.
+create or replace function radar_pe_detect_cases()
+returns integer
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  r record;
+  v_count integer := 0;
+begin
+  for r in select id from radar_pe_chats loop
+    perform radar_pe_detect_cases_for_chat(r.id);
+    v_count := v_count + 1;
+  end loop;
+
   return v_count;
 end;
 $$;
@@ -301,6 +716,10 @@ begin
        set contact_name = coalesce(contact_name, (select contact_name from radar_pe_contacts where chat_id = r.lid_id)),
            phone        = coalesce(phone, (select phone from radar_pe_contacts where chat_id = r.lid_id))
      where chat_id = r.num_id;
+
+    -- 6. mensagens mudaram → recalcula sinais mecânicos e casos do chat canônico
+    perform radar_pe_set_contact_signals(r.num_id);
+    perform radar_pe_detect_cases_for_chat(r.num_id);
 
     delete from radar_pe_contacts where chat_id = r.lid_id;
     delete from radar_pe_chats where id = r.lid_id;

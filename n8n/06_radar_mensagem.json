@@ -1,0 +1,100 @@
+{
+  "name": "06 - Radar Mensagem",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "d1a1b1c1-0001-4000-8000-000000000006",
+      "name": "Trigger"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json || {};\nconst b = item.body || item;\n\n// só eventos de mensagem nova (updates/edit ficam pra depois)\nif (b.event !== 'messages.upsert') return [];\n\nconst inst = b.instance || '';\nconst d = b.data || {};\nconst key = d.key || {};\nconst remoteJid = key.remoteJid || '';\nconst alt = key.remoteJidAlt || '';\n\n// só 1:1 (descarta grupos @g.us e sem jid)\nif (!remoteJid.endsWith('@s.whatsapp.net') && !remoteJid.endsWith('@lid')) return [];\nif (key.participant && key.participant !== '') return [];\n\n// canonicaliza: prefere o número via remoteJidAlt (mesma regra da captação)\nconst jid = (alt && alt.endsWith('@s.whatsapp.net')) ? alt : remoteJid;\nconst phone = jid.endsWith('@s.whatsapp.net') ? jid.replace('@s.whatsapp.net', '') : null;\n\nconst fromMe = !!key.fromMe;\n\n// nome só de mensagem RECEBIDA (mensagem nossa traz o nome da própria sessão)\nlet pushName = fromMe ? null : d.pushName;\nif (pushName === 'Você' || /^[0-9]+$/.test(pushName || '')) pushName = null;\n\n// extrai o body (mesmo CASE da captação)\nconst msg = d.message || {};\nlet body = null;\nif (msg.audioMessage) body = '[audio]';\nelse if (msg.imageMessage) body = msg.imageMessage.caption || '[imagem]';\nelse if (msg.videoMessage) body = msg.videoMessage.caption || '[video]';\nelse if (msg.stickerMessage) body = '[figurinha]';\nelse if (msg.documentMessage) body = msg.documentMessage.caption || '[documento]';\nelse if (msg.locationMessage) body = '[localizacao]';\nelse if (msg.reactionMessage) body = '[reacao]';\nelse if (msg.contactMessage) body = msg.contactMessage.displayName || '[contato]';\nelse {\n  const tmpl = msg.templateMessage && msg.templateMessage.hydratedTemplate;\n  body = msg.conversation\n    || (msg.extendedTextMessage && msg.extendedTextMessage.text)\n    || (tmpl && (tmpl.hydratedContentText || tmpl.title))\n    || null;\n}\n\n// descarta sem conteúdo real (status/ack vêm como '.' ou vazio)\nif (!body || body.trim() === '' || body.trim() === '.') return [];\n\nconst tsSec = d.messageTimestamp;\nconst ts = tsSec ? new Date(tsSec * 1000).toISOString() : null;\nif (!ts) return [];\n\nconst msgId = key.id || (tsSec + '_' + (body || ''));\n\nreturn [{\n  json: {\n    p_instance_name: inst,\n    p_remote_jid: jid,\n    p_contact_name: pushName,\n    p_phone: phone,\n    p_ts: ts,\n    p_from_me: fromMe,\n    p_body: body,\n    p_msg_id: msgId,\n  },\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "id": "d1a1b1c1-0002-4000-8000-000000000006",
+      "name": "Parse Mensagem"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://database.tnledu.shop/rest/v1/rpc/radar_pe_append_message",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_instance_name: $json.p_instance_name, p_remote_jid: $json.p_remote_jid, p_contact_name: $json.p_contact_name, p_phone: $json.p_phone, p_ts: $json.p_ts, p_from_me: $json.p_from_me, p_body: $json.p_body, p_msg_id: $json.p_msg_id }) }}"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        440,
+        0
+      ],
+      "id": "d1a1b1c1-0003-4000-8000-000000000006",
+      "name": "Append Mensagem",
+      "credentials": {
+        "supabaseApi": {
+          "id": "2s75u9F7plz4ovFN",
+          "name": "Supabase account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Trigger": {
+      "main": [
+        [
+          {
+            "node": "Parse Mensagem",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Mensagem": {
+      "main": [
+        [
+          {
+            "node": "Append Mensagem",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append Mensagem": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "pinData": {}
+}
