@@ -42,6 +42,22 @@ export interface Contact {
 
 export type CaseStatus = 'pendente' | 'aprovado' | 'descartado' | 'enviado'
 
+export interface EncaminhamentoForm {
+  titulo: string
+  o_que_disse: string
+  area: string
+  precisa_retorno: string
+  responsavel: string
+  pessoa: string
+  telefone: string
+  data: string
+  urgencia: string
+  o_que_fizemos: string
+  status: string
+  fonte: string
+  cidade: string
+}
+
 export interface Case {
   id: string
   chat_id: string
@@ -59,6 +75,7 @@ export interface Case {
   status: CaseStatus
   sent_to_radar: boolean
   notion_page_id: string | null
+  encaminhamento: EncaminhamentoForm | null
   sent_at: string | null
   created_at: string
   updated_at: string

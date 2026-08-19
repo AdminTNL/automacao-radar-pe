@@ -3,7 +3,54 @@ interface Env {
   SUPABASE_SERVICE_ROLE_KEY: string
   APP_PASSWORD: string
   AUTH_SECRET: string
+  NOTION_TOKEN: string
+  NOTION_DATABASE_ID: string
   ASSETS: Fetcher
+}
+
+// ---------------------------------------------------------------------------
+// Mapeamento form (EncaminhamentoForm) -> propriedades do database do Notion.
+// Os nomes refletem os rótulos do form atual; ajuste aqui se os nomes das
+// propriedades no Notion divergirem. Campos vazios são omitidos do payload
+// (o Notion deixa a propriedade em branco).
+// ---------------------------------------------------------------------------
+type NotionPropType = 'title' | 'rich_text' | 'select' | 'status' | 'phone_number' | 'date'
+
+const NOTION_PROPERTIES: Record<string, { name: string; type: NotionPropType }> = {
+  titulo: { name: 'Título', type: 'title' },
+  o_que_disse: { name: 'O que a pessoa disse', type: 'rich_text' },
+  area: { name: 'Área', type: 'select' },
+  precisa_retorno: { name: 'Precisa de retorno', type: 'select' },
+  responsavel: { name: 'Responsável pelo contato', type: 'rich_text' },
+  pessoa: { name: 'Pessoa', type: 'rich_text' },
+  telefone: { name: 'Telefone', type: 'phone_number' },
+  data: { name: 'Data', type: 'date' },
+  urgencia: { name: 'Urgência', type: 'select' },
+  o_que_fizemos: { name: 'O que a gente fez', type: 'rich_text' },
+  status: { name: 'Status', type: 'status' },
+  fonte: { name: 'Fonte', type: 'select' },
+  cidade: { name: 'Cidade', type: 'select' },
+}
+
+function buildNotionProperty(field: { name: string; type: NotionPropType }, value: string): Record<string, unknown> | null {
+  const v = value.trim()
+  if (!v) return null
+  switch (field.type) {
+    case 'title':
+      return { title: [{ text: { content: v } }] }
+    case 'rich_text':
+      return { rich_text: [{ text: { content: v } }] }
+    case 'select':
+      return { select: { name: v } }
+    case 'status':
+      return { status: { name: v } }
+    case 'phone_number':
+      return { phone_number: v }
+    case 'date':
+      return { date: { start: v } }
+    default:
+      return null
+  }
 }
 
 const COOKIE = 'radar_session'
@@ -131,6 +178,45 @@ async function proxySupabase(request: Request, env: Env): Promise<Response> {
   })
 }
 
+async function handleNotionCreatePage(request: Request, env: Env): Promise<Response> {
+  let body: Record<string, unknown>
+  try {
+    body = (await request.json()) as Record<string, unknown>
+  } catch {
+    return json({ error: 'invalid request' }, 400)
+  }
+
+  const properties: Record<string, unknown> = {}
+  for (const [key, field] of Object.entries(NOTION_PROPERTIES)) {
+    const raw = body[key]
+    const value = typeof raw === 'string' ? raw : ''
+    const prop = buildNotionProperty(field, value)
+    if (prop) properties[field.name] = prop
+  }
+
+  // Título é obrigatório no Notion: se veio vazio, usa "Sem título".
+  const titleField = NOTION_PROPERTIES.titulo
+  if (!properties[titleField.name]) {
+    properties[titleField.name] = { title: [{ text: { content: 'Sem título' } }] }
+  }
+
+  const res = await fetch('https://api.notion.com/v1/pages', {
+    method: 'POST',
+    headers: {
+      'authorization': `Bearer ${env.NOTION_TOKEN}`,
+      'content-type': 'application/json',
+      'notion-version': '2022-06-28',
+    },
+    body: JSON.stringify({ parent: { database_id: env.NOTION_DATABASE_ID }, properties }),
+  })
+
+  const data = (await res.json()) as { id?: string; url?: string; message?: string }
+  if (!res.ok) {
+    return json({ error: data.message ?? 'Falha ao criar página no Notion' }, res.status)
+  }
+  return json({ page_id: data.id, url: data.url })
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url)
@@ -145,6 +231,11 @@ export default {
     if (url.pathname.startsWith('/api/db/')) {
       if (!(await isAuthed(request, env))) return json({ error: 'unauthorized' }, 401)
       return proxySupabase(request, env)
+    }
+
+    if (url.pathname === '/api/notion/pages' && request.method === 'POST') {
+      if (!(await isAuthed(request, env))) return json({ error: 'unauthorized' }, 401)
+      return handleNotionCreatePage(request, env)
     }
 
     return json({ error: 'not found' }, 404)

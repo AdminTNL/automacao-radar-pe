@@ -13,14 +13,14 @@ Consolida o que já está implementado (Etapas 1 e 2a) e o desenho proposto para
 | 2b — casos (`radar_pe_cases`: critério fraseado + aprovação no front) | ✅ feito (1ª passagem) |
 | 2b — tempo real (webhook global + `radar_pe_append_message`) | ✅ feito |
 | 2b — critério fino refinado (status / encaminhamento / Maíra) | ⏳ desenho abaixo |
-| 3 — alimentar Radar Mobiliza PE (Notion) | ⏳ desenho abaixo |
+| 3 — alimentar Radar Mobiliza PE (Notion) | ✅ feito (encaminhamento pós-aprovação) |
 
 ## Visão geral
 
 ```
-Evolution (Postgres) ──► n8n ──► Supabase (radar_pe_*) ──► (futuro) Notion Radar
-                                        │
-                                        └─► Front (Botando pra Moer): contatos, sessões, conversas
+Evolution (Postgres) ──► n8n ──► Supabase (radar_pe_*) ──► Front (Botando pra Moer)
+                                         │                       │
+                                         │                       └─► Worker CF ──► Notion Radar
 ```
 
 - **Evolution** = fonte da verdade (mensagens cruas).
@@ -68,10 +68,11 @@ O `responsavel` da sessão preenche dinamicamente o "responsável" exibido nos c
 `id`, `phrase` (única), `active`, `created_at`. Seed com as frases de "encaminhamento/compromisso" (ex.: "Obrigado por compartilhar", "Vou verificar", "Vou levar esse tema"). Editável pela equipe via SQL sem redeploy. Segue útil mesmo quando a IA assumir o critério — vira sinal de entrada/rótulo explicável.
 
 ### `radar_pe_cases` — casos de Radar (1 contato → N casos)
-`id`, `chat_id`, `contact_id`, `instance_name`, `remote_jid`, `contact_name`, `phone`, `trigger_msg_id`, `matched_phrase`, `fragment_start_at`, `fragment_end_at`, `transcript_snapshot`, `temperatura_snapshot`, `status` (`pendente`/`aprovado`/`descartado`/`enviado`), `sent_to_radar`, `notion_page_id`, `sent_at`, `created_at`, `updated_at`. `unique(chat_id, trigger_msg_id)` = idempotência.
+`id`, `chat_id`, `contact_id`, `instance_name`, `remote_jid`, `contact_name`, `phone`, `trigger_msg_id`, `matched_phrase`, `fragment_start_at`, `fragment_end_at`, `transcript_snapshot`, `temperatura_snapshot`, `status` (`pendente`/`aprovado`/`descartado`/`enviado`), `sent_to_radar`, `notion_page_id`, `encaminhamento`, `sent_at`, `created_at`, `updated_at`. `unique(chat_id, trigger_msg_id)` = idempotência.
 
 - **Detecção** (`radar_pe_detect_cases_for_chat`/`radar_pe_detect_cases`): mensagem **nossa** cujo body contém uma frase ativa → abre caso `pendente`, congelando as últimas N mensagens + o gatilho. Roda no fim de `radar_pe_upsert_chat` (sempre fresca); o bulk cobre o histórico.
 - **Aprovação** (front, aba "Casos pro Radar"): o time lê o `transcript_snapshot` congelado e aprova/descarta; a aba também permite adicionar/editar/desativar as frases-gatilho. `updated_at` só avança em edição humana (trigger espelhando o de contatos).
+- **Encaminhamento (Etapa 3):** aprovar abre um form pré-preenchido (13 campos, espelhando o form do Radar); ao submeter, o front chama `POST /api/notion/pages` no Worker (que detém `NOTION_TOKEN`/`NOTION_DATABASE_ID`), cria a página no Notion e grava no caso `status='enviado'`, `sent_to_radar=true`, `notion_page_id`, `sent_at` e o payload em `encaminhamento jsonb`. O mapeamento campo→propriedade fica em `NOTION_PROPERTIES` no Worker.
 - Cada caso congela um trecho no momento da identificação; conversa continuar ⇒ novos casos, nunca reescrever o antigo. `trigger_msg_id` registra qual mensagem disparou.
 
 ## Temperatura (do contato)
@@ -130,7 +131,7 @@ captação (mensagens jsonb)
   → temperatura_sugerida (frio/morno/quente)
   → critério fraseado (radar_pe_case_phrases) → abre radar_pe_cases 'pendente' (congela fragmento)
   → aprovação do time (front) → 'aprovado' / 'descartado'
-  → dispatch Notion (Etapa 3) → 'enviado' / sent_to_radar = true
+  → encaminhamento (form pré-preenchido) → dispatch Notion (Etapa 3) → 'enviado' / sent_to_radar = true
 ```
 
 - **Camada mecânica** (determinística): derivada do `messages`, sempre fresca. ✅

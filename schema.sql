@@ -207,6 +207,7 @@ create table if not exists radar_pe_cases (
                        check (status in ('pendente','aprovado','descartado','enviado')),
   sent_to_radar        boolean not null default false,
   notion_page_id       text,
+  encaminhamento       jsonb,                    -- payload do form (Etapa 3) enviado ao Notion
   sent_at              timestamptz,
   created_at           timestamptz not null default now(),
   updated_at           timestamptz not null default now(),
@@ -216,6 +217,9 @@ create table if not exists radar_pe_cases (
 create index if not exists radar_pe_cases_status_idx on radar_pe_cases (status);
 create index if not exists radar_pe_cases_chat_idx on radar_pe_cases (chat_id);
 create index if not exists radar_pe_cases_created_idx on radar_pe_cases (created_at);
+
+-- Migração p/ bancos onde a tabela já existia antes da Etapa 3.
+alter table radar_pe_cases add column if not exists encaminhamento jsonb;
 
 -- Toque humano em updated_at: só quando o time aprova/descarta/envia (não a detecção).
 create or replace function radar_pe_cases_touch()

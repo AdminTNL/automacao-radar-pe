@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAutoRefresh } from '../lib/useAutoRefresh'
+import { sendEncaminhamento } from '../lib/notion'
+import { useClosing } from '../lib/useClosing'
 import { fmtDate, isEmpty } from '../lib/format'
-import type { Case, CasePhrase, CaseStatus, Instance } from '../types'
+import type { Case, CasePhrase, CaseStatus, EncaminhamentoForm, Instance } from '../types'
 import EditableText from './EditableText'
+import EncaminhamentoFormModal from './EncaminhamentoForm'
 
 const PAGE_SIZE = 500
 
@@ -29,6 +32,7 @@ export default function CasesTab({ instances }: CasesTabProps) {
   const [statusFilter, setStatusFilter] = useState('pendente')
   const [hasMore, setHasMore] = useState(false)
   const [activeCase, setActiveCase] = useState<Case | null>(null)
+  const [encaminhando, setEncaminhando] = useState<Case | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const prevMaxCreatedAtRef = useRef<string | null>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -42,6 +46,14 @@ export default function CasesTab({ instances }: CasesTabProps) {
   const categoryByInstance = useMemo(() => {
     const m = new Map<string, string>()
     for (const inst of instances) m.set(inst.name, inst.category ?? '—')
+    return m
+  }, [instances])
+
+  const responsavelByInstance = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const inst of instances) {
+      if (inst.responsavel) m.set(inst.name, inst.responsavel)
+    }
     return m
   }, [instances])
 
@@ -155,6 +167,30 @@ export default function CasesTab({ instances }: CasesTabProps) {
     setActiveCase((cur) => (cur && cur.id === id ? { ...cur, status } : cur))
   }
 
+  const openEncaminhamento = (cas: Case) => {
+    setEncaminhando(cas)
+  }
+
+  const submitEncaminhamento = async (form: EncaminhamentoForm) => {
+    const cas = encaminhando
+    if (!cas) return
+    const { page_id } = await sendEncaminhamento(form)
+    const now = new Date().toISOString()
+    const patch = {
+      status: 'enviado' as const,
+      sent_to_radar: true,
+      notion_page_id: page_id,
+      sent_at: now,
+      encaminhamento: form,
+    }
+    const { error } = await supabase.from('radar_pe_cases').update(patch).eq('id', cas.id)
+    if (error) throw new Error(error.message)
+    setCases((prev) => prev.map((c) => (c.id === cas.id ? { ...c, ...patch } : c)))
+    setActiveCase(null)
+    setEncaminhando(null)
+    setToast('Caso enviado ao Radar.')
+  }
+
   const openPhrases = async () => {
     setNewPhrase('')
     setPhraseError(null)
@@ -170,10 +206,14 @@ export default function CasesTab({ instances }: CasesTabProps) {
     }
   }
 
-  const closePhrases = () => {
-    if (phraseSaving) return
+  const { closing: phrasesClosing, startClosing: startClosingPhrases } = useClosing(() => {
     setShowPhrases(false)
     setPhraseError(null)
+  })
+
+  const closePhrases = () => {
+    if (phraseSaving) return
+    startClosingPhrases()
   }
 
   const addPhrase = async () => {
@@ -336,12 +376,22 @@ export default function CasesTab({ instances }: CasesTabProps) {
           cas={activeCase}
           onClose={() => setActiveCase(null)}
           onSetStatus={(status) => applyStatus(activeCase.id, status)}
+          onApprove={() => openEncaminhamento(activeCase)}
+        />
+      )}
+
+      {encaminhando && (
+        <EncaminhamentoFormModal
+          cas={encaminhando}
+          responsavel={responsavelByInstance.get(encaminhando.instance_name ?? '') ?? ''}
+          onClose={() => setEncaminhando(null)}
+          onSubmit={submitEncaminhamento}
         />
       )}
 
       {showPhrases && (
-        <div className="modal-overlay" onClick={closePhrases}>
-          <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
+        <div className={`modal-overlay${phrasesClosing ? ' closing' : ''}`} onClick={closePhrases}>
+          <div className={`modal modal-wide${phrasesClosing ? ' closing' : ''}`} onClick={(e) => e.stopPropagation()}>
             <header className="modal-header">
               <h2 className="modal-title">Frases-gatilho</h2>
               <button type="button" className="drawer-close" onClick={closePhrases} aria-label="Fechar">
@@ -422,24 +472,27 @@ interface CaseDrawerProps {
   cas: Case
   onClose: () => void
   onSetStatus: (status: CaseStatus) => Promise<void>
+  onApprove: () => void
 }
 
-function CaseDrawer({ cas, onClose, onSetStatus }: CaseDrawerProps) {
+function CaseDrawer({ cas, onClose, onSetStatus, onApprove }: CaseDrawerProps) {
   const [saving, setSaving] = useState(false)
+  const { closing, startClosing } = useClosing(onClose)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') startClosing()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  }, [startClosing])
 
-  const changeStatus = async (status: CaseStatus) => {
-    if (saving) return
+  const changeStatus = async (status: CaseStatus, closeAfter = false) => {
+    if (saving || closing) return
     setSaving(true)
     try {
       await onSetStatus(status)
+      if (closeAfter) startClosing()
     } catch {
       // erro já exibido no topo da aba
     } finally {
@@ -450,8 +503,8 @@ function CaseDrawer({ cas, onClose, onSetStatus }: CaseDrawerProps) {
   const name = cas.contact_name || cas.phone || cas.remote_jid || 'Contato'
 
   return (
-    <div className="drawer-overlay" onClick={onClose}>
-      <div className="drawer" onClick={(e) => e.stopPropagation()}>
+    <div className={`drawer-overlay${closing ? ' closing' : ''}`} onClick={startClosing}>
+      <div className={`drawer${closing ? ' closing' : ''}`} onClick={(e) => e.stopPropagation()}>
         <header className="drawer-header">
           <div className="drawer-heading">
             <div className="drawer-title">{name}</div>
@@ -470,7 +523,7 @@ function CaseDrawer({ cas, onClose, onSetStatus }: CaseDrawerProps) {
               Status: {STATUS_LABEL[cas.status]}
             </div>
           </div>
-          <button type="button" className="drawer-close" onClick={onClose} aria-label="Fechar">
+          <button type="button" className="drawer-close" onClick={startClosing} aria-label="Fechar">
             ✕
           </button>
         </header>
@@ -507,16 +560,16 @@ function CaseDrawer({ cas, onClose, onSetStatus }: CaseDrawerProps) {
               <button
                 type="button"
                 className="btn-approve"
-                disabled={saving || cas.status === 'aprovado'}
-                onClick={() => void changeStatus('aprovado')}
+                disabled={saving}
+                onClick={onApprove}
               >
-                Aprovar
+                {cas.status === 'aprovado' ? 'Encaminhar' : 'Aprovar'}
               </button>
               <button
                 type="button"
                 className="btn-discard"
                 disabled={saving || cas.status === 'descartado'}
-                onClick={() => void changeStatus('descartado')}
+                onClick={() => void changeStatus('descartado', true)}
               >
                 Descartar
               </button>

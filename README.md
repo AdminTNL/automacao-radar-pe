@@ -130,6 +130,7 @@ Em resumo: **Evolution** = fonte da verdade · **`radar_pe_chats`** = cópia de 
 - Abas: **Contatos** (lista/edita `radar_pe_contacts`), **Sessões** (gerencia instâncias + responsáveis) e **Casos pro Radar** (revisa e aprova/descarta possíveis casos; gerencia as frases-gatilho).
 - Lista `radar_pe_contacts` ordenada por `last_message_at` desc, com busca (nome/telefone), filtro por categoria e edição inline de nome/telefone (o trigger `radar_pe_contacts_touch` bumpa `updated_at` na edição).
 - **Auth:** senha única compartilhada (secret `APP_PASSWORD` no Cloudflare). O Worker checa a senha, emite cookie assinado (`AUTH_SECRET`) e só libera os dados para sessão válida. A service role key fica **só no Worker**, nunca no bundle.
+- **Encaminhamento pro Notion (Etapa 3):** aprovar um caso abre um form pré-preenchido (13 campos, espelhando o form atual) que, ao ser submetido, cria a página no database do Notion via o Worker (`POST /api/notion/pages`) e marca o caso como `enviado` (salva o payload em `radar_pe_cases.encaminhamento`).
 
 ## Deploy (Cloudflare Workers)
 
@@ -139,11 +140,38 @@ npm run build
 wrangler secret put APP_PASSWORD               # senha de acesso (interativo)
 wrangler secret put AUTH_SECRET                # ex.: openssl rand -base64 32
 wrangler secret put SUPABASE_SERVICE_ROLE_KEY
+wrangler secret put NOTION_TOKEN               # token da internal integration do Notion
+wrangler secret put NOTION_DATABASE_ID         # id do database "Radar Mobiliza PE"
 wrangler deploy
 ```
 
 - `SUPABASE_URL` fica em `vars` no `wrangler.jsonc`.
 - **Login persistente:** o cookie dura 1 ano (teto do browser) e a sessão só expira ao rotacionar o `AUTH_SECRET`. Para trocar a senha (e derrubar todo mundo): `wrangler secret put APP_PASSWORD` **e** `wrangler secret put AUTH_SECRET`.
+
+## Setup Notion (Etapa 3)
+
+1. Em [notion.so/my-integrations](https://www.notion.so/my-integrations), criar uma **internal integration** e copiar o token (`NOTION_TOKEN`).
+2. No database de destino (o "Radar Mobiliza PE"), clicar em **⋮ → Connections → Conectar** a integração (senão a API retorna 401/403).
+3. Copiar o **database id** (parte da URL antes do `?`): `NOTION_DATABASE_ID`.
+4. Criar as propriedades abaixo **com os mesmos nomes** (o mapeamento fica em `front/worker/index.ts`, em `NOTION_PROPERTIES` — ajuste lá se os nomes divergirem):
+
+| Propriedade | Tipo Notion |
+| --- | --- |
+| Título | Title |
+| O que a pessoa disse | Text |
+| Área | Select |
+| Precisa de retorno | Select (Sim/Não) |
+| Responsável pelo contato | Text |
+| Pessoa | Text |
+| Telefone | Phone |
+| Data | Date |
+| Urgência | Select |
+| O que a gente fez | Text |
+| Status | Status (ou Select) |
+| Fonte | Select |
+| Cidade | Select |
+
+> As opções dos selects (Área, Urgência, Fonte, Cidade, Status) são livres — o form do front já envia os valores corretos; o Notion cria as opções automaticamente na primeira página.
 
 ## Roadmap
 
@@ -154,5 +182,5 @@ wrangler deploy
 - [X] Etapa 2b (casos) — critério fraseado + `radar_pe_cases` + aprovação no front (aba "Casos")
 - [X] Etapa 2b (tempo real) — webhook global + `radar_pe_append_message` (SLA de segundos)
 - [ ] Etapa 2b (critério fino) — status/encaminhamento/`sent_to_radar` (com a Maíra)
-- [ ] Etapa 3 — alimentar Radar Mobiliza PE (Notion)
+- [X] Etapa 3 — alimentar Radar Mobiliza PE (Notion) — aprovar abre form pré-preenchido → envia pro database
 - [ ] Calibração (2–3 rodadas) + trocar frase do painel de campo
