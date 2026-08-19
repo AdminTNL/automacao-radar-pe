@@ -126,6 +126,7 @@ export default function ConversationDrawer({
     const map = new Map<string, Message[]>()
     for (const m of messages as Message[]) {
       if (!m.ts) continue
+      if (!m.body || m.body.trim() === '') continue
       const k = dayKey(m.ts)
       if (!map.has(k)) map.set(k, [])
       map.get(k)!.push(m)

@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { useAutoRefresh } from '../lib/useAutoRefresh'
 import { fmtDate, isEmpty } from '../lib/format'
 import type { Contact, Instance, Message } from '../types'
 import ConversationDrawer from './ConversationDrawer'
@@ -19,12 +20,14 @@ export default function ContactsTab({ instances }: ContactsTabProps) {
   const [search, setSearch] = useState('')
   const [category, setCategory] = useState('')
   const [session, setSession] = useState('')
+  const [responsavel, setResponsavel] = useState('')
   const [hasMore, setHasMore] = useState(false)
   const [activeContact, setActiveContact] = useState<Contact | null>(null)
   const [transcript, setTranscript] = useState<string | null>(null)
   const [messages, setMessages] = useState<Message[] | null>(null)
   const [transcriptLoading, setTranscriptLoading] = useState(false)
   const [transcriptError, setTranscriptError] = useState<string | null>(null)
+  const wrapRef = useRef<HTMLDivElement>(null)
 
   const categoryByInstance = useMemo(() => {
     const m = new Map<string, string>()
@@ -50,15 +53,24 @@ export default function ContactsTab({ instances }: ContactsTabProps) {
     [instances],
   )
 
-  const loadFirstPage = useCallback(async () => {
-    setLoading(true)
-    setError(null)
+  const responsaveis = useMemo(
+    () => Array.from(new Set(instances.map((i) => i.responsavel).filter(Boolean) as string[])).sort((a, b) => a.localeCompare(b, 'pt-BR')),
+    [instances],
+  )
 
-    const contRes = await supabase
+  const fetchFirstPage = useCallback(async () => {
+    return supabase
       .from('radar_pe_contacts')
       .select('*')
       .order('last_message_at', { ascending: false, nullsFirst: false })
       .limit(PAGE_SIZE)
+  }, [])
+
+  const loadFirstPage = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+
+    const contRes = await fetchFirstPage()
 
     if (contRes.error) {
       setError(contRes.error.message)
@@ -69,14 +81,26 @@ export default function ContactsTab({ instances }: ContactsTabProps) {
     }
 
     setLoading(false)
-  }, [])
+  }, [fetchFirstPage])
+
+  const refreshSilently = useCallback(async () => {
+    const contRes = await fetchFirstPage()
+    if (contRes.error) return
+    const rows = (contRes.data ?? []) as Contact[]
+    setContacts(rows)
+    setHasMore(rows.length === PAGE_SIZE)
+  }, [fetchFirstPage])
 
   useEffect(() => {
     void loadFirstPage()
   }, [loadFirstPage])
 
+  useAutoRefresh(() => {
+    void refreshSilently()
+  }, 60000)
+
   const loadMore = async () => {
-    if (loadingMore || contacts.length === 0) return
+    if (loadingMore || contacts.length === 0 || !hasMore) return
     setLoadingMore(true)
     const { data, error } = await supabase
       .from('radar_pe_contacts')
@@ -94,18 +118,27 @@ export default function ContactsTab({ instances }: ContactsTabProps) {
     setLoadingMore(false)
   }
 
+  const handleScroll = () => {
+    const el = wrapRef.current
+    if (!el) return
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 200) {
+      void loadMore()
+    }
+  }
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
     return contacts.filter((c) => {
       if (session && c.instance_name !== session) return false
       if (category && categoryByInstance.get(c.instance_name ?? '') !== category) return false
+      if (responsavel && (c.responsavel ?? responsavelByInstance.get(c.instance_name ?? '') ?? '') !== responsavel) return false
       if (!q) return true
       return (
         (c.contact_name ?? '').toLowerCase().includes(q) ||
         (c.phone ?? '').toLowerCase().includes(q)
       )
     })
-  }, [contacts, search, category, session, categoryByInstance])
+  }, [contacts, search, category, session, responsavel, categoryByInstance, responsavelByInstance])
 
   const saveField = async (id: string, field: 'contact_name' | 'phone', value: string) => {
     const payload = field === 'contact_name' ? { contact_name: value || null } : { phone: value || null }
@@ -164,9 +197,14 @@ export default function ContactsTab({ instances }: ContactsTabProps) {
             </option>
           ))}
         </select>
-        <button type="button" className="refresh" onClick={() => void loadFirstPage()}>
-          Recarregar
-        </button>
+        <select value={responsavel} onChange={(e) => setResponsavel(e.target.value)}>
+          <option value="">Todos os responsáveis</option>
+          {responsaveis.map((r) => (
+            <option key={r} value={r}>
+              {r}
+            </option>
+          ))}
+        </select>
       </div>
 
       {error && <div className="error">Erro: {error}</div>}
@@ -174,7 +212,7 @@ export default function ContactsTab({ instances }: ContactsTabProps) {
 
       {!loading && !error && (
         <>
-          <div className="table-wrap">
+          <div className="table-wrap" ref={wrapRef} onScroll={handleScroll}>
             <table>
               <thead>
                 <tr>
@@ -187,7 +225,6 @@ export default function ContactsTab({ instances }: ContactsTabProps) {
                   <th>Encaminhamento</th>
                   <th>Temperatura</th>
                   <th>Responsável</th>
-                  <th className="center">Radar</th>
                 </tr>
               </thead>
               <tbody>
@@ -265,27 +302,25 @@ export default function ContactsTab({ instances }: ContactsTabProps) {
                         <span className="muted">—</span>
                       )}
                     </td>
-                    <td className="center">{c.sent_to_radar ? '✓' : ''}</td>
                   </tr>
                 ))}
                 {filtered.length === 0 && (
                   <tr>
-                    <td colSpan={10} className="state">
+                    <td colSpan={9} className="state">
                       Nenhum contato encontrado.
+                    </td>
+                  </tr>
+                )}
+                {loadingMore && (
+                  <tr>
+                    <td colSpan={9} className="state">
+                      Carregando…
                     </td>
                   </tr>
                 )}
               </tbody>
             </table>
           </div>
-
-          {hasMore && (
-            <div className="load-more">
-              <button type="button" onClick={() => void loadMore()} disabled={loadingMore}>
-                {loadingMore ? 'Carregando…' : 'Carregar mais'}
-              </button>
-            </div>
-          )}
         </>
       )}
 

@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { supabase } from './lib/supabase'
 import { me, logout } from './lib/auth'
+import { useAutoRefresh } from './lib/useAutoRefresh'
+import logo from './assets/logoc5.png'
 import type { Instance } from './types'
 import ContactsTab from './components/ContactsTab'
 import SessionsTab from './components/SessionsTab'
@@ -15,6 +17,8 @@ export default function App() {
   const [instances, setInstances] = useState<Instance[]>([])
   const [instancesError, setInstancesError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<Tab>('contatos')
+  const [newCasesCount, setNewCasesCount] = useState(0)
+  const lastSeenRef = useRef<string | null>(null)
 
   useEffect(() => {
     void me().then((ok) => setAuth(ok ? 'authed' : 'guest'))
@@ -42,6 +46,48 @@ export default function App() {
     void loadInstances()
   }, [loadInstances])
 
+  useAutoRefresh(() => {
+    void loadInstances()
+  }, 60000)
+
+  const checkNewCases = useCallback(async () => {
+    if (lastSeenRef.current === null) {
+      const { data, error } = await supabase
+        .from('radar_pe_cases')
+        .select('created_at')
+        .order('created_at', { ascending: false })
+        .limit(1)
+      if (!error && data && data.length > 0) {
+        lastSeenRef.current = (data[0] as { created_at: string }).created_at
+      }
+      return
+    }
+
+    const since = lastSeenRef.current
+    const { data, error } = await supabase
+      .from('radar_pe_cases')
+      .select('created_at')
+      .gt('created_at', since)
+      .order('created_at', { ascending: false })
+
+    if (error || !data || data.length === 0) return
+
+    lastSeenRef.current = (data[0] as { created_at: string }).created_at
+
+    if (activeTab !== 'casos') {
+      setNewCasesCount((n) => n + data.length)
+    }
+  }, [activeTab])
+
+  useAutoRefresh(() => {
+    void checkNewCases()
+  }, 60000)
+
+  const openTab = (tab: Tab) => {
+    if (tab === 'casos') setNewCasesCount(0)
+    setActiveTab(tab)
+  }
+
   if (auth === 'loading') {
     return <div className="state">Carregando…</div>
   }
@@ -53,7 +99,9 @@ export default function App() {
   return (
     <div className="app">
       <header className="topbar">
+        <img className="logo" src={logo} alt="Logo" />
         <h1>Botando pra Moer</h1>
+        <span className="subtitle">Atualiza a cada 60s</span>
         <button type="button" className="logout-btn" onClick={() => void doLogout()}>
           Sair
         </button>
@@ -63,23 +111,24 @@ export default function App() {
         <button
           type="button"
           className={`tab ${activeTab === 'contatos' ? 'tab-active' : ''}`}
-          onClick={() => setActiveTab('contatos')}
+          onClick={() => openTab('contatos')}
         >
           Contatos
         </button>
         <button
           type="button"
           className={`tab ${activeTab === 'sessoes' ? 'tab-active' : ''}`}
-          onClick={() => setActiveTab('sessoes')}
+          onClick={() => openTab('sessoes')}
         >
           Sessões
         </button>
         <button
           type="button"
           className={`tab ${activeTab === 'casos' ? 'tab-active' : ''}`}
-          onClick={() => setActiveTab('casos')}
+          onClick={() => openTab('casos')}
         >
           Casos pro Radar
+          {newCasesCount > 0 && <span className="tab-badge">{newCasesCount}</span>}
         </button>
       </nav>
 

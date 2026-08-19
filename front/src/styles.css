@@ -30,19 +30,53 @@ body {
   line-height: 1.5;
 }
 
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: #30363d;
+  border-radius: 4px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: #484f58;
+}
+
 .app {
   max-width: 1440px;
   margin: 0 auto;
-  padding: 24px 24px 64px;
+  padding: 24px 24px 16px;
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .topbar {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 12px;
   margin-bottom: 16px;
   padding-bottom: 16px;
   border-bottom: 1px solid var(--border-muted);
+}
+
+.logo {
+  height: 36px;
+  width: auto;
+  display: block;
 }
 
 .topbar h1 {
@@ -80,8 +114,16 @@ body {
   padding: 16px;
 }
 
-.login-card {
+.login-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
   width: min(360px, 100%);
+}
+
+.login-card {
+  width: 100%;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -96,6 +138,20 @@ body {
   font-size: 18px;
   font-weight: 600;
   color: var(--text-bright);
+}
+
+.login-logo {
+  height: 40px;
+  width: auto;
+  max-width: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.login-warn {
+  margin: 0;
+  color: #d29922;
+  font-size: 12px;
 }
 
 .login-sub {
@@ -216,7 +272,8 @@ select {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   overflow: auto;
-  max-height: 72vh;
+  flex: 1;
+  min-height: 0;
 }
 
 table {
@@ -337,31 +394,6 @@ tbody tr:hover {
   cursor: default;
   color: var(--text);
   border-bottom: 1px dotted var(--border);
-}
-
-.load-more {
-  text-align: center;
-  margin-top: 16px;
-}
-
-.load-more button {
-  padding: 6px 20px;
-  background: #21262d;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  color: var(--text-bright);
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: 500;
-}
-
-.load-more button:hover {
-  background: #30363d;
-}
-
-.load-more button:disabled {
-  opacity: 0.5;
-  cursor: default;
 }
 
 .row-clickable {
@@ -578,6 +610,19 @@ tbody tr:hover {
   border-bottom-color: var(--accent);
 }
 
+.tab-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #0d1117;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.4;
+  vertical-align: middle;
+}
+
 .strong {
   color: var(--text-bright);
   font-weight: 600;
@@ -591,6 +636,21 @@ tbody tr:hover {
 .badge-off {
   background: var(--danger-bg);
   color: var(--danger);
+}
+
+.toast {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 60;
+  padding: 12px 18px;
+  background: var(--overlay);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  color: var(--text-bright);
+  font-size: 14px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
 }
 
 .modal-overlay {

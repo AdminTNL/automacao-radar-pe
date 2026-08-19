@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { useAutoRefresh } from '../lib/useAutoRefresh'
 import { fmtDate, isEmpty } from '../lib/format'
 import type { Case, CasePhrase, CaseStatus, Instance } from '../types'
 import EditableText from './EditableText'
@@ -28,6 +29,9 @@ export default function CasesTab({ instances }: CasesTabProps) {
   const [statusFilter, setStatusFilter] = useState('pendente')
   const [hasMore, setHasMore] = useState(false)
   const [activeCase, setActiveCase] = useState<Case | null>(null)
+  const [toast, setToast] = useState<string | null>(null)
+  const prevMaxCreatedAtRef = useRef<string | null>(null)
+  const wrapRef = useRef<HTMLDivElement>(null)
 
   const [showPhrases, setShowPhrases] = useState(false)
   const [phrases, setPhrases] = useState<CasePhrase[]>([])
@@ -41,33 +45,68 @@ export default function CasesTab({ instances }: CasesTabProps) {
     return m
   }, [instances])
 
-  const loadFirstPage = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-
-    const res = await supabase
+  const fetchFirstPage = useCallback(async () => {
+    return supabase
       .from('radar_pe_cases')
       .select('*')
       .order('created_at', { ascending: false })
       .limit(PAGE_SIZE)
+  }, [])
+
+  const countNew = (rows: Case[]): number => {
+    if (rows.length === 0) return 0
+    const newest = rows[0].created_at
+    const prev = prevMaxCreatedAtRef.current
+    prevMaxCreatedAtRef.current = newest
+    if (!prev) return 0
+    const prevTs = Date.parse(prev)
+    return rows.filter((c) => Date.parse(c.created_at) > prevTs).length
+  }
+
+  const loadFirstPage = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+
+    const res = await fetchFirstPage()
 
     if (res.error) {
       setError(res.error.message)
     } else {
       const rows = (res.data ?? []) as Case[]
+      countNew(rows)
       setCases(rows)
       setHasMore(rows.length === PAGE_SIZE)
     }
 
     setLoading(false)
-  }, [])
+  }, [fetchFirstPage])
+
+  const refreshSilently = useCallback(async () => {
+    const res = await fetchFirstPage()
+    if (res.error) return
+    const rows = (res.data ?? []) as Case[]
+    const newCount = countNew(rows)
+    if (newCount > 0) setToast(`${newCount} novo(s) caso(s) pro Radar`)
+    setCases(rows)
+    setHasMore(rows.length === PAGE_SIZE)
+  }, [fetchFirstPage])
 
   useEffect(() => {
     void loadFirstPage()
   }, [loadFirstPage])
 
+  useEffect(() => {
+    if (!toast) return
+    const t = setTimeout(() => setToast(null), 5000)
+    return () => clearTimeout(t)
+  }, [toast])
+
+  useAutoRefresh(() => {
+    void refreshSilently()
+  }, 60000)
+
   const loadMore = async () => {
-    if (loadingMore || cases.length === 0) return
+    if (loadingMore || cases.length === 0 || !hasMore) return
     setLoadingMore(true)
     const { data, error } = await supabase
       .from('radar_pe_cases')
@@ -83,6 +122,14 @@ export default function CasesTab({ instances }: CasesTabProps) {
       setError(error.message)
     }
     setLoadingMore(false)
+  }
+
+  const handleScroll = () => {
+    const el = wrapRef.current
+    if (!el) return
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 200) {
+      void loadMore()
+    }
   }
 
   const filtered = useMemo(() => {
@@ -206,9 +253,6 @@ export default function CasesTab({ instances }: CasesTabProps) {
           <option value="descartado">Descartados</option>
           <option value="enviado">Enviados</option>
         </select>
-        <button type="button" className="refresh" onClick={() => void loadFirstPage()}>
-          Recarregar
-        </button>
         <button type="button" className="refresh" onClick={() => void openPhrases()}>
           Frases-gatilho
         </button>
@@ -219,7 +263,7 @@ export default function CasesTab({ instances }: CasesTabProps) {
 
       {!loading && !error && (
         <>
-          <div className="table-wrap">
+          <div className="table-wrap" ref={wrapRef} onScroll={handleScroll}>
             <table>
               <thead>
                 <tr>
@@ -274,17 +318,16 @@ export default function CasesTab({ instances }: CasesTabProps) {
                     </td>
                   </tr>
                 )}
+                {loadingMore && (
+                  <tr>
+                    <td colSpan={7} className="state">
+                      Carregando…
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
-
-          {hasMore && (
-            <div className="load-more">
-              <button type="button" onClick={() => void loadMore()} disabled={loadingMore}>
-                {loadingMore ? 'Carregando…' : 'Carregar mais'}
-              </button>
-            </div>
-          )}
         </>
       )}
 
@@ -369,6 +412,8 @@ export default function CasesTab({ instances }: CasesTabProps) {
           </div>
         </div>
       )}
+
+      {toast && <div className="toast">{toast}</div>}
     </>
   )
 }
