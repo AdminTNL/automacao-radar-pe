@@ -126,11 +126,20 @@ async function proxySupabase(request: Request, env: Env): Promise<Response> {
   headers.set('authorization', `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`)
 
   const hasBody = request.method !== 'GET' && request.method !== 'HEAD'
-  return fetch(target.toString(), {
-    method: request.method,
-    headers,
-    body: hasBody ? request.body : undefined,
-  })
+  let res: Response
+  try {
+    res = await fetch(target.toString(), {
+      method: request.method,
+      headers,
+      body: hasBody ? request.body : undefined,
+    })
+  } catch {
+    return json(
+      { code: 'BACKEND_UNREACHABLE', message: 'Sistema temporariamente fora do ar' },
+      502,
+    )
+  }
+  return res
 }
 
 async function handleNotionCreatePage(request: Request, env: Env): Promise<Response> {

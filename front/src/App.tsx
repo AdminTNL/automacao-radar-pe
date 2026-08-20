@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { supabase } from './lib/supabase'
 import { me, logout } from './lib/auth'
+import { isOfflineError } from './lib/errors'
 import { useAutoRefresh } from './lib/useAutoRefresh'
 import logo from './assets/logoc5.png'
 import type { Instance } from './types'
@@ -16,6 +17,7 @@ export default function App() {
   const [auth, setAuth] = useState<AuthState>('loading')
   const [instances, setInstances] = useState<Instance[]>([])
   const [instancesError, setInstancesError] = useState<string | null>(null)
+  const [offline, setOffline] = useState(false)
   const [activeTab, setActiveTab] = useState<Tab>('contatos')
   const [newCasesCount, setNewCasesCount] = useState(0)
   const lastSeenRef = useRef<string | null>(null)
@@ -36,8 +38,16 @@ export default function App() {
       .order('name')
 
     if (error) {
-      setInstancesError(error.message)
+      if (isOfflineError(error)) {
+        setOffline(true)
+        setInstancesError(null)
+      } else {
+        setOffline(false)
+        setInstancesError(error.message)
+      }
     } else {
+      setOffline(false)
+      setInstancesError(null)
       setInstances((data ?? []) as Instance[])
     }
   }, [])
@@ -133,14 +143,18 @@ export default function App() {
         </button>
       </nav>
 
-      {instancesError && <div className="error">Erro: {instancesError}</div>}
+      {offline ? (
+        <div className="offline-banner">Sistema temporariamente fora do ar — tentando reconectar…</div>
+      ) : instancesError ? (
+        <div className="error">Erro: {instancesError}</div>
+      ) : null}
 
       {activeTab === 'contatos' ? (
-        <ContactsTab instances={instances} />
+        <ContactsTab instances={instances} offline={offline} />
       ) : activeTab === 'sessoes' ? (
-        <SessionsTab instances={instances} onChanged={() => void loadInstances()} />
+        <SessionsTab instances={instances} offline={offline} onChanged={() => void loadInstances()} />
       ) : (
-        <CasesTab instances={instances} />
+        <CasesTab instances={instances} offline={offline} />
       )}
     </div>
   )

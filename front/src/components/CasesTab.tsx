@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAutoRefresh } from '../lib/useAutoRefresh'
+import { errorMessage, isOfflineError } from '../lib/errors'
 import { sendEncaminhamento } from '../lib/notion'
 import { useClosing } from '../lib/useClosing'
 import { fmtDate, isEmpty } from '../lib/format'
@@ -21,9 +22,10 @@ const EDITABLE_STATUSES: CaseStatus[] = ['pendente', 'aprovado', 'descartado']
 
 interface CasesTabProps {
   instances: Instance[]
+  offline: boolean
 }
 
-export default function CasesTab({ instances }: CasesTabProps) {
+export default function CasesTab({ instances, offline }: CasesTabProps) {
   const [cases, setCases] = useState<Case[]>([])
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -82,7 +84,7 @@ export default function CasesTab({ instances }: CasesTabProps) {
     const res = await fetchFirstPage()
 
     if (res.error) {
-      setError(res.error.message)
+      if (!isOfflineError(res.error)) setError(res.error.message)
     } else {
       const rows = (res.data ?? []) as Case[]
       countNew(rows)
@@ -130,7 +132,7 @@ export default function CasesTab({ instances }: CasesTabProps) {
       const rows = data as Case[]
       setCases((prev) => [...prev, ...rows])
       setHasMore(rows.length === PAGE_SIZE)
-    } else if (error) {
+    } else if (error && !isOfflineError(error)) {
       setError(error.message)
     }
     setLoadingMore(false)
@@ -160,8 +162,8 @@ export default function CasesTab({ instances }: CasesTabProps) {
   const applyStatus = async (id: string, status: CaseStatus) => {
     const { error } = await supabase.from('radar_pe_cases').update({ status }).eq('id', id)
     if (error) {
-      setError(error.message)
-      throw new Error(error.message)
+      if (!isOfflineError(error)) setError(error.message)
+      throw new Error(errorMessage(error))
     }
     setCases((prev) => prev.map((c) => (c.id === id ? { ...c, status } : c)))
     setActiveCase((cur) => (cur && cur.id === id ? { ...cur, status } : cur))
@@ -184,7 +186,7 @@ export default function CasesTab({ instances }: CasesTabProps) {
       encaminhamento: form,
     }
     const { error } = await supabase.from('radar_pe_cases').update(patch).eq('id', cas.id)
-    if (error) throw new Error(error.message)
+    if (error) throw new Error(errorMessage(error))
     setCases((prev) => prev.map((c) => (c.id === cas.id ? { ...c, ...patch } : c)))
     setActiveCase(null)
     setEncaminhando(null)
@@ -200,7 +202,7 @@ export default function CasesTab({ instances }: CasesTabProps) {
       .select('*')
       .order('phrase')
     if (error) {
-      setPhraseError(error.message)
+      setPhraseError(errorMessage(error))
     } else {
       setPhrases((data ?? []) as CasePhrase[])
     }
@@ -228,7 +230,7 @@ export default function CasesTab({ instances }: CasesTabProps) {
       .single()
 
     if (error) {
-      setPhraseError(error.code === '23505' ? 'Essa frase já existe.' : error.message)
+      setPhraseError(error.code === '23505' ? 'Essa frase já existe.' : errorMessage(error))
     } else if (data) {
       setNewPhrase('')
       setPhrases((prev) =>
@@ -247,7 +249,7 @@ export default function CasesTab({ instances }: CasesTabProps) {
       .eq('id', id)
     if (error) {
       if (error.code === '23505') throw new Error('Essa frase já existe.')
-      throw new Error(error.message)
+      throw new Error(errorMessage(error))
     }
     setPhrases((prev) =>
       prev.map((p) => (p.id === id ? { ...p, phrase } : p)).sort((a, b) => a.phrase.localeCompare(b.phrase, 'pt-BR')),
@@ -260,7 +262,7 @@ export default function CasesTab({ instances }: CasesTabProps) {
       .update({ active })
       .eq('id', id)
     if (error) {
-      setPhraseError(error.message)
+      setPhraseError(errorMessage(error))
       return
     }
     setPhrases((prev) => prev.map((p) => (p.id === id ? { ...p, active } : p)))
@@ -270,7 +272,7 @@ export default function CasesTab({ instances }: CasesTabProps) {
     if (!window.confirm(`Excluir a frase "${phrase}"?`)) return
     const { error } = await supabase.from('radar_pe_case_phrases').delete().eq('id', id)
     if (error) {
-      setPhraseError(error.message)
+      setPhraseError(errorMessage(error))
       return
     }
     setPhrases((prev) => prev.filter((p) => p.id !== id))
@@ -354,7 +356,7 @@ export default function CasesTab({ instances }: CasesTabProps) {
                 {filtered.length === 0 && (
                   <tr>
                     <td colSpan={7} className="state">
-                      Nenhum caso encontrado.
+                      {offline ? 'Sem conexão com o servidor.' : 'Nenhum caso encontrado.'}
                     </td>
                   </tr>
                 )}

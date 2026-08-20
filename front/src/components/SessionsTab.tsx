@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { errorMessage } from '../lib/errors'
 import { fmtDate } from '../lib/format'
 import type { Instance } from '../types'
 
@@ -13,10 +14,11 @@ function categoryOptions(current?: string | null): string[] {
 
 interface SessionsTabProps {
   instances: Instance[]
+  offline: boolean
   onChanged: () => void
 }
 
-export default function SessionsTab({ instances, onChanged }: SessionsTabProps) {
+export default function SessionsTab({ instances, offline, onChanged }: SessionsTabProps) {
   const [search, setSearch] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('')
   const [showForm, setShowForm] = useState(false)
@@ -96,7 +98,7 @@ export default function SessionsTab({ instances, onChanged }: SessionsTabProps) 
       })
 
       if (error) {
-        setFormError(error.code === '23505' ? 'Já existe uma sessão com esse nome.' : error.message)
+        setFormError(error.code === '23505' ? 'Já existe uma sessão com esse nome.' : errorMessage(error))
       } else {
         setNewName('')
         setNewCategory('')
@@ -125,7 +127,7 @@ export default function SessionsTab({ instances, onChanged }: SessionsTabProps) 
       .from('radar_pe_instances')
       .update({ responsavel: value || null })
       .eq('name', name)
-    if (error) throw new Error(error.message)
+    if (error) throw new Error(errorMessage(error))
     onChanged()
   }
 
@@ -154,7 +156,7 @@ export default function SessionsTab({ instances, onChanged }: SessionsTabProps) 
       const { error } = await supabase.from('radar_pe_responsaveis').insert({ name })
 
       if (error) {
-        setRespError(error.code === '23505' ? 'Já existe esse responsável.' : error.message)
+        setRespError(error.code === '23505' ? 'Já existe esse responsável.' : errorMessage(error))
       } else {
         setNewRespName('')
         setShowRespForm(false)
@@ -252,7 +254,11 @@ export default function SessionsTab({ instances, onChanged }: SessionsTabProps) 
             {filtered.length === 0 && (
               <tr>
                 <td colSpan={5} className="state">
-                  {instances.length === 0 ? 'Nenhuma sessão cadastrada.' : 'Nenhuma sessão encontrada.'}
+                  {offline
+                    ? 'Sem conexão com o servidor.'
+                    : instances.length === 0
+                      ? 'Nenhuma sessão cadastrada.'
+                      : 'Nenhuma sessão encontrada.'}
                 </td>
               </tr>
             )}

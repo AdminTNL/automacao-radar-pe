@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAutoRefresh } from '../lib/useAutoRefresh'
+import { errorMessage, isOfflineError } from '../lib/errors'
 import { fmtDate, isEmpty } from '../lib/format'
 import type { Contact, Instance, Message } from '../types'
 import ConversationDrawer from './ConversationDrawer'
@@ -10,9 +11,10 @@ const PAGE_SIZE = 500
 
 interface ContactsTabProps {
   instances: Instance[]
+  offline: boolean
 }
 
-export default function ContactsTab({ instances }: ContactsTabProps) {
+export default function ContactsTab({ instances, offline }: ContactsTabProps) {
   const [contacts, setContacts] = useState<Contact[]>([])
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -73,7 +75,7 @@ export default function ContactsTab({ instances }: ContactsTabProps) {
     const contRes = await fetchFirstPage()
 
     if (contRes.error) {
-      setError(contRes.error.message)
+      if (!isOfflineError(contRes.error)) setError(contRes.error.message)
     } else {
       const rows = (contRes.data ?? []) as Contact[]
       setContacts(rows)
@@ -112,7 +114,7 @@ export default function ContactsTab({ instances }: ContactsTabProps) {
       const rows = data as Contact[]
       setContacts((prev) => [...prev, ...rows])
       setHasMore(rows.length === PAGE_SIZE)
-    } else if (error) {
+    } else if (error && !isOfflineError(error)) {
       setError(error.message)
     }
     setLoadingMore(false)
@@ -143,7 +145,7 @@ export default function ContactsTab({ instances }: ContactsTabProps) {
   const saveField = async (id: string, field: 'contact_name' | 'phone', value: string) => {
     const payload = field === 'contact_name' ? { contact_name: value || null } : { phone: value || null }
     const { error } = await supabase.from('radar_pe_contacts').update(payload).eq('id', id)
-    if (error) throw new Error(error.message)
+    if (error) throw new Error(errorMessage(error))
     setContacts((prev) => prev.map((c) => (c.id === id ? { ...c, ...payload } : c)))
   }
 
@@ -161,7 +163,7 @@ export default function ContactsTab({ instances }: ContactsTabProps) {
       .maybeSingle()
 
     if (error) {
-      setTranscriptError(error.message)
+      if (!isOfflineError(error)) setTranscriptError(error.message)
     } else {
       setTranscript(data?.transcript ?? null)
       setMessages((data?.messages as Message[] | null) ?? null)
@@ -308,7 +310,7 @@ export default function ContactsTab({ instances }: ContactsTabProps) {
                 {filtered.length === 0 && (
                   <tr>
                     <td colSpan={9} className="state">
-                      Nenhum contato encontrado.
+                      {offline ? 'Sem conexão com o servidor.' : 'Nenhum contato encontrado.'}
                     </td>
                   </tr>
                 )}
