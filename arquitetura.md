@@ -19,8 +19,8 @@ Consolida o que já está implementado (Etapas 1 e 2a) e o desenho proposto para
 
 ```
 Evolution (Postgres) ──► n8n ──► Supabase (radar_pe_*) ──► Front (Botando pra Moer)
-                                         │                       │
-                                         │                       └─► Worker CF ──► Notion Radar
+                                       │                       │
+                                       │                       └─► Worker CF ──► n8n ──► Notion Radar
 ```
 
 - **Evolution** = fonte da verdade (mensagens cruas).
@@ -72,7 +72,7 @@ O `responsavel` da sessão preenche dinamicamente o "responsável" exibido nos c
 
 - **Detecção** (`radar_pe_detect_cases_for_chat`/`radar_pe_detect_cases`): mensagem **nossa** cujo body contém uma frase ativa → abre caso `pendente`, congelando as últimas N mensagens + o gatilho. Roda no fim de `radar_pe_upsert_chat` (sempre fresca); o bulk cobre o histórico.
 - **Aprovação** (front, aba "Casos pro Radar"): o time lê o `transcript_snapshot` congelado e aprova/descarta; a aba também permite adicionar/editar/desativar as frases-gatilho. `updated_at` só avança em edição humana (trigger espelhando o de contatos).
-- **Encaminhamento (Etapa 3):** aprovar abre um form pré-preenchido (13 campos, espelhando o form do Radar); ao submeter, o front chama `POST /api/notion/pages` no Worker (que detém `NOTION_TOKEN`/`NOTION_DATABASE_ID`), cria a página no Notion e grava no caso `status='enviado'`, `sent_to_radar=true`, `notion_page_id`, `sent_at` e o payload em `encaminhamento jsonb`. O mapeamento campo→propriedade fica em `NOTION_PROPERTIES` no Worker.
+- **Encaminhamento (Etapa 3):** aprovar abre um form pré-preenchido (13 campos, espelhando o form do Radar); ao submeter, o front chama `POST /api/notion/pages` no Worker, que repassa o form pro webhook do n8n (`07 - Notion Create Page`, autenticado por `x-radar-secret`). O n8n cria a página no Notion usando a credencial do node Notion e devolve `page_id`/`url`; o front grava no caso `status='enviado'`, `sent_to_radar=true`, `notion_page_id`, `sent_at` e o payload em `encaminhamento jsonb`. O mapeamento campo→propriedade fica no node "Create Page" do `07`.
 - Cada caso congela um trecho no momento da identificação; conversa continuar ⇒ novos casos, nunca reescrever o antigo. `trigger_msg_id` registra qual mensagem disparou.
 
 ## Temperatura (do contato)

@@ -16,7 +16,7 @@ A calibração roda contra a referência dos 15 casos da semana 11–14/08: o mo
 ## Arquitetura
 
 ```
-Evolution (Postgres, cred "admin evo")  ──►  n8n  ──►  Supabase (radar_pe_*)  ──►  (futuro) Notion Radar
+Evolution (Postgres, cred "admin evo")  ──►  n8n  ──►  Supabase (radar_pe_*)  ──►  Front  ──►  Worker CF  ──►  n8n  ──►  Notion Radar
 ```
 
 - A captação lê o Postgres da Evolution **direto** (sem REST/apikey), com filtro 1:1 (`@s.whatsapp.net` + `@lid`).
@@ -33,6 +33,7 @@ Evolution (Postgres, cred "admin evo")  ──►  n8n  ──►  Supabase (rad
 | `n8n/04_diario_main.json` | Main: cron diário → lista instâncias → chama 03 |
 | `n8n/05_health.json` | Cron diário: checa `connectionState` e marca sessões offline |
 | `n8n/06_radar_mensagem.json` | Sub: captura 1 mensagem "ao vivo" (webhook) — append + sinais + detecção |
+| `n8n/07_notion_create_page.json` | Sub: webhook → cria página no Notion (usa a credencial do node Notion) |
 | `queries_validacao.md` | Queries pra conferir o resultado do backfill |
 | `arquitetura.md` | Desenho técnico (estado atual + Etapas 2b/3) pra alinhamento com o time |
 | `front/` | CRM básico (Vite + React + TS) pra ver/editar `radar_pe_contacts` |
@@ -130,7 +131,7 @@ Em resumo: **Evolution** = fonte da verdade · **`radar_pe_chats`** = cópia de 
 - Abas: **Contatos** (lista/edita `radar_pe_contacts`), **Sessões** (gerencia instâncias + responsáveis) e **Casos pro Radar** (revisa e aprova/descarta possíveis casos; gerencia as frases-gatilho).
 - Lista `radar_pe_contacts` ordenada por `last_message_at` desc, com busca (nome/telefone), filtro por categoria e edição inline de nome/telefone (o trigger `radar_pe_contacts_touch` bumpa `updated_at` na edição).
 - **Auth:** senha única compartilhada (secret `APP_PASSWORD` no Cloudflare). O Worker checa a senha, emite cookie assinado (`AUTH_SECRET`) e só libera os dados para sessão válida. A service role key fica **só no Worker**, nunca no bundle.
-- **Encaminhamento pro Notion (Etapa 3):** aprovar um caso abre um form pré-preenchido (13 campos, espelhando o form atual) que, ao ser submetido, cria a página no database do Notion via o Worker (`POST /api/notion/pages`) e marca o caso como `enviado` (salva o payload em `radar_pe_cases.encaminhamento`).
+- **Encaminhamento pro Notion (Etapa 3):** aprovar um caso abre um form pré-preenchido (13 campos, espelhando o form atual) que, ao ser submetido, é enviado pelo Worker ao webhook do n8n (`POST /api/notion/pages` → `07 - Notion Create Page`). O n8n cria a página no database do Notion (com a credencial do node Notion) e devolve o `page_id`; o front marca o caso como `enviado` (salva o payload em `radar_pe_cases.encaminhamento`).
 
 ## Deploy (Cloudflare Workers)
 
@@ -140,8 +141,8 @@ npm run build
 wrangler secret put APP_PASSWORD               # senha de acesso (interativo)
 wrangler secret put AUTH_SECRET                # ex.: openssl rand -base64 32
 wrangler secret put SUPABASE_SERVICE_ROLE_KEY
-wrangler secret put NOTION_TOKEN               # token da internal integration do Notion
-wrangler secret put NOTION_DATABASE_ID         # id do database "Radar Mobiliza PE"
+wrangler secret put N8N_NOTION_WEBHOOK_URL     # URL do webhook "07 - Notion Create Page"
+wrangler secret put N8N_NOTION_WEBHOOK_SECRET  # mesmo segredo configurado no Code do 07
 wrangler deploy
 ```
 
@@ -150,10 +151,7 @@ wrangler deploy
 
 ## Setup Notion (Etapa 3)
 
-1. Em [notion.so/my-integrations](https://www.notion.so/my-integrations), criar uma **internal integration** e copiar o token (`NOTION_TOKEN`).
-2. No database de destino (o "Radar Mobiliza PE"), clicar em **⋮ → Connections → Conectar** a integração (senão a API retorna 401/403).
-3. Copiar o **database id** (parte da URL antes do `?`): `NOTION_DATABASE_ID`.
-4. Criar as propriedades abaixo **com os mesmos nomes** (o mapeamento fica em `front/worker/index.ts`, em `NOTION_PROPERTIES` — ajuste lá se os nomes divergirem):
+A criação da página no Notion é feita pelo **n8n** (que já tem a credencial do node Notion configurada) — o Worker só repassa o form. As propriedades abaixo devem existir no database "Radar Mobiliza PE" **com os mesmos nomes** (o mapeamento fica no node "Create Page" do `07 - Notion Create Page` — ajuste lá se os nomes divergirem):
 
 | Propriedade | Tipo Notion |
 | --- | --- |
@@ -172,6 +170,13 @@ wrangler deploy
 | Cidade | Select |
 
 > As opções dos selects (Área, Urgência, Fonte, Cidade, Status) são livres — o form do front já envia os valores corretos; o Notion cria as opções automaticamente na primeira página.
+
+Passos no n8n:
+
+1. Importar o `07_notion_create_page.json`.
+2. No node **Create Page**: selecionar a **credencial do Notion** já existente e o **database** "Radar Mobiliza PE" (substituir o placeholder `SELECIONE_DATABASE_NOTION`).
+3. No node **Auth + Normalize**: trocar `TROQUE_PELO_SEGREDO` por um segredo forte (ex.: `openssl rand -hex 32`) — e usar o **mesmo valor** no `N8N_NOTION_WEBHOOK_SECRET` do Worker.
+4. Ativar o workflow e copiar a **URL do webhook** (Production) pro `N8N_NOTION_WEBHOOK_URL` do Worker.
 
 ## Roadmap
 

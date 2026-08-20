@@ -1,0 +1,199 @@
+{
+  "name": "07 - Notion Create Page",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "radar-notion",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "d1a1b1c1-0001-4000-8000-000000000007",
+      "name": "Webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Segredo compartilhado com o Worker do Cloudflare (env N8N_NOTION_WEBHOOK_SECRET).\n// Troque 'TROQUE_PELO_SEGREDO' pelo mesmo valor configurado no Worker.\nconst SECRET = 'TROQUE_PELO_SEGREDO';\n\nconst item = $input.first().json || {};\nconst headers = item.headers || {};\n\nconst headerName = Object.keys(headers).find((k) => k.toLowerCase() === 'x-radar-secret');\nif (!headerName || headers[headerName] !== SECRET) {\n  throw new Error('x-radar-secret invalido ou ausente');\n}\n\nconst b = item.body || item;\n\nreturn [{\n  json: {\n    titulo: (b.titulo && String(b.titulo).trim()) || 'Sem título',\n    o_que_disse: b.o_que_disse ?? '',\n    area: b.area ?? '',\n    precisa_retorno: b.precisa_retorno ?? '',\n    responsavel: b.responsavel ?? '',\n    pessoa: b.pessoa ?? '',\n    telefone: b.telefone ?? '',\n    data: b.data ?? '',\n    urgencia: b.urgencia ?? '',\n    o_que_fizemos: b.o_que_fizemos ?? '',\n    status: b.status ?? '',\n    fonte: b.fonte ?? '',\n    cidade: b.cidade ?? '',\n  },\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "id": "d1a1b1c1-0002-4000-8000-000000000007",
+      "name": "Auth + Normalize"
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "create",
+        "authentication": "apiKey",
+        "databaseId": {
+          "__rl": true,
+          "value": "SELECIONE_DATABASE_NOTION",
+          "mode": "id"
+        },
+        "title": "={{ $json.titulo }}",
+        "simple": true,
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "O que a pessoa disse|rich_text",
+              "type": "rich_text",
+              "richText": false,
+              "textContent": "={{ $json.o_que_disse }}"
+            },
+            {
+              "key": "Área|select",
+              "type": "select",
+              "selectValue": "={{ $json.area }}"
+            },
+            {
+              "key": "Precisa de retorno|select",
+              "type": "select",
+              "selectValue": "={{ $json.precisa_retorno }}"
+            },
+            {
+              "key": "Responsável pelo contato|rich_text",
+              "type": "rich_text",
+              "richText": false,
+              "textContent": "={{ $json.responsavel }}"
+            },
+            {
+              "key": "Pessoa|rich_text",
+              "type": "rich_text",
+              "richText": false,
+              "textContent": "={{ $json.pessoa }}"
+            },
+            {
+              "key": "Telefone|phone_number",
+              "type": "phone_number",
+              "phoneValue": "={{ $json.telefone }}"
+            },
+            {
+              "key": "Data|date",
+              "type": "date",
+              "range": false,
+              "includeTime": false,
+              "date": "={{ $json.data }}",
+              "timezone": "default"
+            },
+            {
+              "key": "Urgência|select",
+              "type": "select",
+              "selectValue": "={{ $json.urgencia }}"
+            },
+            {
+              "key": "O que a gente fez|rich_text",
+              "type": "rich_text",
+              "richText": false,
+              "textContent": "={{ $json.o_que_fizemos }}"
+            },
+            {
+              "key": "Status|status",
+              "type": "status",
+              "statusValue": "={{ $json.status }}"
+            },
+            {
+              "key": "Fonte|select",
+              "type": "select",
+              "selectValue": "={{ $json.fonte }}"
+            },
+            {
+              "key": "Cidade|select",
+              "type": "select",
+              "selectValue": "={{ $json.cidade }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        0
+      ],
+      "id": "d1a1b1c1-0003-4000-8000-000000000007",
+      "name": "Create Page",
+      "credentials": {
+        "notionApi": {
+          "id": "SELECIONE_CREDENCIAL_NOTION",
+          "name": "Notion (selecionar)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ page_id: $json.id, url: $json.url }) }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.2,
+      "position": [
+        660,
+        0
+      ],
+      "id": "d1a1b1c1-0004-4000-8000-000000000007",
+      "name": "Respond"
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Auth + Normalize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth + Normalize": {
+      "main": [
+        [
+          {
+            "node": "Create Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Page": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "pinData": {}
+}

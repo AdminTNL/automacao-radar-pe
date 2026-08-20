@@ -3,54 +3,9 @@ interface Env {
   SUPABASE_SERVICE_ROLE_KEY: string
   APP_PASSWORD: string
   AUTH_SECRET: string
-  NOTION_TOKEN: string
-  NOTION_DATABASE_ID: string
+  N8N_NOTION_WEBHOOK_URL: string
+  N8N_NOTION_WEBHOOK_SECRET: string
   ASSETS: Fetcher
-}
-
-// ---------------------------------------------------------------------------
-// Mapeamento form (EncaminhamentoForm) -> propriedades do database do Notion.
-// Os nomes refletem os rótulos do form atual; ajuste aqui se os nomes das
-// propriedades no Notion divergirem. Campos vazios são omitidos do payload
-// (o Notion deixa a propriedade em branco).
-// ---------------------------------------------------------------------------
-type NotionPropType = 'title' | 'rich_text' | 'select' | 'status' | 'phone_number' | 'date'
-
-const NOTION_PROPERTIES: Record<string, { name: string; type: NotionPropType }> = {
-  titulo: { name: 'Título', type: 'title' },
-  o_que_disse: { name: 'O que a pessoa disse', type: 'rich_text' },
-  area: { name: 'Área', type: 'select' },
-  precisa_retorno: { name: 'Precisa de retorno', type: 'select' },
-  responsavel: { name: 'Responsável pelo contato', type: 'rich_text' },
-  pessoa: { name: 'Pessoa', type: 'rich_text' },
-  telefone: { name: 'Telefone', type: 'phone_number' },
-  data: { name: 'Data', type: 'date' },
-  urgencia: { name: 'Urgência', type: 'select' },
-  o_que_fizemos: { name: 'O que a gente fez', type: 'rich_text' },
-  status: { name: 'Status', type: 'status' },
-  fonte: { name: 'Fonte', type: 'select' },
-  cidade: { name: 'Cidade', type: 'select' },
-}
-
-function buildNotionProperty(field: { name: string; type: NotionPropType }, value: string): Record<string, unknown> | null {
-  const v = value.trim()
-  if (!v) return null
-  switch (field.type) {
-    case 'title':
-      return { title: [{ text: { content: v } }] }
-    case 'rich_text':
-      return { rich_text: [{ text: { content: v } }] }
-    case 'select':
-      return { select: { name: v } }
-    case 'status':
-      return { status: { name: v } }
-    case 'phone_number':
-      return { phone_number: v }
-    case 'date':
-      return { date: { start: v } }
-    default:
-      return null
-  }
 }
 
 const COOKIE = 'radar_session'
@@ -186,35 +141,34 @@ async function handleNotionCreatePage(request: Request, env: Env): Promise<Respo
     return json({ error: 'invalid request' }, 400)
   }
 
-  const properties: Record<string, unknown> = {}
-  for (const [key, field] of Object.entries(NOTION_PROPERTIES)) {
-    const raw = body[key]
-    const value = typeof raw === 'string' ? raw : ''
-    const prop = buildNotionProperty(field, value)
-    if (prop) properties[field.name] = prop
+  // O Worker só repassa o form pro n8n (que detém a credencial do Notion).
+  // A autenticação do usuário já foi feita acima (cookie); o secret protege o
+  // webhook do n8n contra chamadas diretas.
+  let res: Response
+  try {
+    res = await fetch(env.N8N_NOTION_WEBHOOK_URL, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-radar-secret': env.N8N_NOTION_WEBHOOK_SECRET,
+      },
+      body: JSON.stringify(body),
+    })
+  } catch {
+    return json({ error: 'Falha ao chamar o n8n' }, 502)
   }
 
-  // Título é obrigatório no Notion: se veio vazio, usa "Sem título".
-  const titleField = NOTION_PROPERTIES.titulo
-  if (!properties[titleField.name]) {
-    properties[titleField.name] = { title: [{ text: { content: 'Sem título' } }] }
+  let data: { page_id?: string; url?: string; error?: string; message?: string } = {}
+  try {
+    data = (await res.json()) as typeof data
+  } catch {
+    data = {}
   }
 
-  const res = await fetch('https://api.notion.com/v1/pages', {
-    method: 'POST',
-    headers: {
-      'authorization': `Bearer ${env.NOTION_TOKEN}`,
-      'content-type': 'application/json',
-      'notion-version': '2022-06-28',
-    },
-    body: JSON.stringify({ parent: { database_id: env.NOTION_DATABASE_ID }, properties }),
-  })
-
-  const data = (await res.json()) as { id?: string; url?: string; message?: string }
   if (!res.ok) {
-    return json({ error: data.message ?? 'Falha ao criar página no Notion' }, res.status)
+    return json({ error: data.message ?? data.error ?? 'Falha ao criar página no Notion' }, res.status)
   }
-  return json({ page_id: data.id, url: data.url })
+  return json({ page_id: data.page_id ?? '', url: data.url ?? '' })
 }
 
 export default {
