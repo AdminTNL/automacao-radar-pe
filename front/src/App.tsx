@@ -43,8 +43,9 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    if (auth !== 'authed') return
     void loadInstances()
-  }, [loadInstances])
+  }, [auth, loadInstances])
 
   useAutoRefresh(() => {
     void loadInstances()
