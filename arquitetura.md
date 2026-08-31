@@ -14,6 +14,7 @@ Consolida o que já está implementado (Etapas 1 e 2a) e o desenho proposto para
 | 2b — tempo real (webhook global + `radar_pe_append_message`) | ✅ feito |
 | 2b — critério fino refinado (status / encaminhamento / Maíra) | ⏳ desenho abaixo |
 | 3 — alimentar Radar Mobiliza PE (Notion) | ✅ feito (encaminhamento pós-aprovação) |
+| Áudio → Drive | ✅ feito (emoji-gatilho do operador salva o último áudio do contato no Google Drive, tempo real) |
 
 ## Visão geral
 
@@ -138,6 +139,23 @@ captação (mensagens jsonb)
 - **Critério fraseado** (1ª passagem): abre casos a partir das frases-gatilho. ✅ (substitui temporariamente o julgamento fino)
 - **Camada fina** (julgamento): critério da Maíra, depois assistida por IA. ⏳
 - **Calibração**: bater perto dos **15** casos da semana 11–14/08 (referência "Botando pra Moer").
+
+## Áudio → Drive
+
+Espelha o critério fraseado, mas para áudio: quando o operador responde com uma combinação de emoji cadastrada em `radar_pe_audio_triggers`, o fluxo salva o **último `[audio]` recebido do contato** no Google Drive.
+
+```
+mensagem nossa (emoji-gatilho) → 06 (append + gate from_me) → 08 - Salvar Áudio
+   → radar_pe_find_last_audio (último [audio] do contato)
+   → radar_pe_try_create_audio_save (dedup por chat_id+trigger_msg_id)
+   → Evolution findMedia (base64) → Google Drive (pasta fixa)
+   → radar_pe_mark_audio_save ('salvo'/'erro')
+```
+
+- **Detecção no n8n (JS), não em SQL** — o match do emoji (semântica **contém**, como as frases-gatilho) e o download/upload ficam no `08`; a seleção do áudio fica na RPC `radar_pe_find_last_audio` (POST, sem filtro GET — evita o "failed to parse filter" de instância com espaço no nome). O SQL (`radar_pe_audio_saves`) é só auditoria + idempotência.
+- **Gatilho real time:** o `06` chama o `08` em paralelo ao append, mas com um `If` `É nosso?` (só `from_me`). A consulta do último áudio só roda depois do match de emoji.
+- **Identificação do contato** no nome do arquivo: `{data}_{instance}_{nome}_{telefone}.ogg`.
+- **Limitação:** contato `@lid` sem número pode falhar no `findMedia` (jid canônico difere) → log `erro`, não trava.
 
 ## Frequência e gatilhos
 

@@ -1,0 +1,261 @@
+{
+  "name": "10 - Reenviar Áudio",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "radar-audio-resend",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "d1a1b1c1-0001-4000-8000-000000000010",
+      "name": "Webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Segredo compartilhado com o Worker do Cloudflare (env N8N_AUDIO_RESEND_WEBHOOK_SECRET).\n// Troque 'TROQUE_PELO_SEGREDO' pelo mesmo valor configurado no Worker.\nconst SECRET = 'TROQUE_PELO_SEGREDO';\n\nconst item = $input.first().json || {};\nconst headers = item.headers || {};\n\nconst headerName = Object.keys(headers).find((k) => k.toLowerCase() === 'x-radar-secret');\nif (!headerName || headers[headerName] !== SECRET) {\n  throw new Error('x-radar-secret invalido ou ausente');\n}\n\nconst body = item.body || item;\nconst audio_save_id = body.id || '';\nif (!audio_save_id) {\n  throw new Error('id ausente');\n}\n\nreturn [{ json: { audio_save_id } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "id": "d1a1b1c1-0002-4000-8000-000000000010",
+      "name": "Auth + Parse"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://database.tnledu.shop/rest/v1/radar_pe_audio_saves",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "id",
+              "value": "={{ 'eq.' + $json.audio_save_id }}"
+            },
+            {
+              "name": "select",
+              "value": "id,instance_name,remote_jid,contact_name,phone,audio_msg_id,audio_ts,status"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        440,
+        0
+      ],
+      "id": "d1a1b1c1-0003-4000-8000-000000000010",
+      "name": "Get Row",
+      "credentials": {
+        "supabaseApi": {
+          "id": "2s75u9F7plz4ovFN",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const row = $input.first().json || {};\n\nif (!row || !row.id) {\n  return [{ json: { ok: false, error: 'Áudio não encontrado' } }];\n}\nif (row.status === 'salvo') {\n  return [{ json: { ok: false, error: 'Áudio já salvo' } }];\n}\n\nreturn [{ json: {\n  ok: true,\n  instance_name: row.instance_name,\n  audio_msg_id: row.audio_msg_id,\n  contact_name: row.contact_name,\n  phone: row.phone,\n  audio_ts: row.audio_ts,\n  save_id: row.id,\n} }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "id": "d1a1b1c1-0004-4000-8000-000000000010",
+      "name": "Prepara Reenvio"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "d1a1b1c1-0005-4000-8000-000000000010",
+              "leftValue": "={{ String($json.ok) }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        0
+      ],
+      "id": "d1a1b1c1-0006-4000-8000-000000000010",
+      "name": "Pode reenviar?"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "SELECIONE_O_WORKFLOW_DOWNLOAD_AUDIO",
+          "mode": "list",
+          "cachedResultName": "09 - Download Áudio"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1100,
+        0
+      ],
+      "id": "d1a1b1c1-0007-4000-8000-000000000010",
+      "name": "Download Áudio (09)"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.2,
+      "position": [
+        1320,
+        0
+      ],
+      "id": "d1a1b1c1-0008-4000-8000-000000000010",
+      "name": "Respond Ok"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false, error: ($json.error || 'Não foi possível reenviar') }) }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.2,
+      "position": [
+        1100,
+        200
+      ],
+      "id": "d1a1b1c1-0009-4000-8000-000000000010",
+      "name": "Respond Erro"
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Auth + Parse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth + Parse": {
+      "main": [
+        [
+          {
+            "node": "Get Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Row": {
+      "main": [
+        [
+          {
+            "node": "Prepara Reenvio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepara Reenvio": {
+      "main": [
+        [
+          {
+            "node": "Pode reenviar?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pode reenviar?": {
+      "main": [
+        [
+          {
+            "node": "Download Áudio (09)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Erro",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Áudio (09)": {
+      "main": [
+        [
+          {
+            "node": "Respond Ok",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond Ok": {
+      "main": [
+        []
+      ]
+    },
+    "Respond Erro": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "pinData": {}
+}

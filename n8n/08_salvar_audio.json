@@ -1,0 +1,358 @@
+{
+  "name": "08 - Salvar Áudio",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "d1a1b1c1-0001-4000-8000-000000000008",
+      "name": "Trigger"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://database.tnledu.shop/rest/v1/radar_pe_audio_triggers",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "select",
+              "value": "emoji"
+            },
+            {
+              "name": "active",
+              "value": "eq.true"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        220,
+        0
+      ],
+      "id": "d1a1b1c1-0002-4000-8000-000000000008",
+      "name": "Get Triggers",
+      "credentials": {
+        "supabaseApi": {
+          "id": "2s75u9F7plz4ovFN",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Só mensagens NOSSAS que contenham um emoji-gatilho ativo (contém, como as\n// frases-gatilho do radar). Roda antes de qualquer consulta na base.\nconst t = $('Trigger').first().json || {};\n\nconst norm = (s) => (s || '').replace(/\\uFE0F/g, '').trim();\nconst body = norm(t.p_body || '');\n\nif (!t.p_from_me) return [];\n\nconst hits = ($('Get Triggers').all().map((i) => i.json.emoji) || [])\n  .map((e) => ({ raw: e, n: norm(e) }))\n  .filter((e) => e.n && body.includes(e.n))\n  .sort((a, b) => b.n.length - a.n.length);\n\nif (!hits.length) return [];\nconst triggerEmoji = hits[0].raw;\n\nreturn [{\n  json: {\n    instance_name: t.p_instance_name,\n    remote_jid: t.p_remote_jid,\n    contact_name: t.p_contact_name || null,\n    phone: t.p_phone || null,\n    trigger_msg_id: t.p_msg_id,\n    trigger_emoji: triggerEmoji,\n  },\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "id": "d1a1b1c1-0004-4000-8000-000000000008",
+      "name": "É gatilho?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://database.tnledu.shop/rest/v1/rpc/radar_pe_find_last_audio",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_instance_name: $json.instance_name, p_remote_jid: $json.remote_jid }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        660,
+        0
+      ],
+      "id": "d1a1b1c1-0005-4000-8000-000000000008",
+      "name": "Find Último Áudio",
+      "credentials": {
+        "supabaseApi": {
+          "id": "2s75u9F7plz4ovFN",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Junta o emoji-gatilho com o áudio achado. Sem áudio (audio_msg_id vazio/ausente)\n// encerra o fluxo sem efeito.\nconst t = $('É gatilho?').first().json || {};\nconst row = $input.first().json || {};\n\nif (!row || !row.audio_msg_id) return [];\n\nreturn [{\n  json: {\n    instance_name: t.instance_name,\n    remote_jid: t.remote_jid,\n    contact_name: row.contact_name || t.contact_name,\n    phone: row.phone || t.phone,\n    trigger_msg_id: t.trigger_msg_id,\n    audio_msg_id: row.audio_msg_id,\n    audio_ts: row.audio_ts,\n    trigger_emoji: t.trigger_emoji,\n  },\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ],
+      "id": "d1a1b1c1-0006-4000-8000-000000000008",
+      "name": "Prepara"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://database.tnledu.shop/rest/v1/rpc/radar_pe_try_create_audio_save",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_instance_name: $json.instance_name, p_remote_jid: $json.remote_jid, p_contact_name: $json.contact_name, p_phone: $json.phone, p_trigger_msg_id: $json.trigger_msg_id, p_audio_msg_id: $json.audio_msg_id, p_audio_ts: $json.audio_ts, p_trigger_emoji: $json.trigger_emoji }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1100,
+        0
+      ],
+      "id": "d1a1b1c1-0007-4000-8000-000000000008",
+      "name": "Try Create",
+      "credentials": {
+        "supabaseApi": {
+          "id": "2s75u9F7plz4ovFN",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "d1a1b1c1-0008-4000-8000-000000000008",
+              "leftValue": "={{ String($json.is_new) }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1320,
+        0
+      ],
+      "id": "d1a1b1c1-0009-4000-8000-000000000008",
+      "name": "É novo?"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "d1a1b1c1-0030-4000-8000-000000000008",
+              "name": "instance_name",
+              "value": "={{ $('Prepara').first().json.instance_name }}",
+              "type": "string"
+            },
+            {
+              "id": "d1a1b1c1-0031-4000-8000-000000000008",
+              "name": "audio_msg_id",
+              "value": "={{ $('Prepara').first().json.audio_msg_id }}",
+              "type": "string"
+            },
+            {
+              "id": "d1a1b1c1-0032-4000-8000-000000000008",
+              "name": "contact_name",
+              "value": "={{ $('Prepara').first().json.contact_name }}",
+              "type": "string"
+            },
+            {
+              "id": "d1a1b1c1-0033-4000-8000-000000000008",
+              "name": "phone",
+              "value": "={{ $('Prepara').first().json.phone }}",
+              "type": "string"
+            },
+            {
+              "id": "d1a1b1c1-0034-4000-8000-000000000008",
+              "name": "audio_ts",
+              "value": "={{ $('Prepara').first().json.audio_ts }}",
+              "type": "string"
+            },
+            {
+              "id": "d1a1b1c1-0035-4000-8000-000000000008",
+              "name": "save_id",
+              "value": "={{ $json.id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1540,
+        0
+      ],
+      "id": "d1a1b1c1-0036-4000-8000-000000000008",
+      "name": "Dados p/ Download"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "SELECIONE_O_WORKFLOW_DOWNLOAD_AUDIO",
+          "mode": "list",
+          "cachedResultName": "09 - Download Áudio"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1760,
+        0
+      ],
+      "id": "d1a1b1c1-0037-4000-8000-000000000008",
+      "name": "Download Áudio (09)"
+    }
+  ],
+  "connections": {
+    "Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Triggers",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Triggers": {
+      "main": [
+        [
+          {
+            "node": "É gatilho?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "É gatilho?": {
+      "main": [
+        [
+          {
+            "node": "Find Último Áudio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Último Áudio": {
+      "main": [
+        [
+          {
+            "node": "Prepara",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepara": {
+      "main": [
+        [
+          {
+            "node": "Try Create",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Try Create": {
+      "main": [
+        [
+          {
+            "node": "É novo?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "É novo?": {
+      "main": [
+        [
+          {
+            "node": "Dados p/ Download",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Dados p/ Download": {
+      "main": [
+        [
+          {
+            "node": "Download Áudio (09)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Áudio (09)": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "pinData": {}
+}

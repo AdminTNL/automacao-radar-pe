@@ -5,6 +5,8 @@ interface Env {
   AUTH_SECRET: string
   N8N_NOTION_WEBHOOK_URL: string
   N8N_NOTION_WEBHOOK_SECRET: string
+  N8N_AUDIO_RESEND_WEBHOOK_URL: string
+  N8N_AUDIO_RESEND_WEBHOOK_SECRET: string
   ASSETS: Fetcher
 }
 
@@ -180,6 +182,48 @@ async function handleNotionCreatePage(request: Request, env: Env): Promise<Respo
   return json({ page_id: data.page_id ?? '', url: data.url ?? '' })
 }
 
+async function handleAudioResend(request: Request, env: Env): Promise<Response> {
+  let body: { id?: unknown }
+  try {
+    body = (await request.json()) as typeof body
+  } catch {
+    return json({ error: 'invalid request' }, 400)
+  }
+  const id = typeof body?.id === 'string' ? body.id : ''
+  if (!id) return json({ error: 'id ausente' }, 400)
+
+  // O Worker só repassa o id pro webhook do n8n (fluxo 10), que baixa o áudio da
+  // Evolution e sobe no Drive de novo.
+  let res: Response
+  try {
+    res = await fetch(env.N8N_AUDIO_RESEND_WEBHOOK_URL, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-radar-secret': env.N8N_AUDIO_RESEND_WEBHOOK_SECRET,
+      },
+      body: JSON.stringify({ id }),
+    })
+  } catch {
+    return json({ error: 'Falha ao chamar o n8n' }, 502)
+  }
+
+  let data: { ok?: boolean; error?: string; message?: string } = {}
+  try {
+    data = (await res.json()) as typeof data
+  } catch {
+    data = {}
+  }
+
+  if (!res.ok || data.ok === false) {
+    return json(
+      { error: data.error ?? data.message ?? 'Falha ao reenviar áudio' },
+      res.status === 200 ? 400 : res.status,
+    )
+  }
+  return json({ ok: true })
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url)
@@ -199,6 +243,11 @@ export default {
     if (url.pathname === '/api/notion/pages' && request.method === 'POST') {
       if (!(await isAuthed(request, env))) return json({ error: 'unauthorized' }, 401)
       return handleNotionCreatePage(request, env)
+    }
+
+    if (url.pathname === '/api/audio/resend' && request.method === 'POST') {
+      if (!(await isAuthed(request, env))) return json({ error: 'unauthorized' }, 401)
+      return handleAudioResend(request, env)
     }
 
     return json({ error: 'not found' }, 404)

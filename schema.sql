@@ -247,6 +247,53 @@ create trigger radar_pe_cases_touch_trigger
   for each row execute function radar_pe_cases_touch();
 
 -- ---------------------------------------------------------------------------
+-- 3.3 Áudio → Drive: triggers de emoji + registro de salvamentos
+-- ---------------------------------------------------------------------------
+
+-- Combinações de emoji que, quando o OPERADOR responde numa conversa, disparam
+-- o salvamento do último áudio recebido do contato no Google Drive.
+-- Configurável via SQL (espelha radar_pe_case_phrases). Edite/troque os valores
+-- sem redeploy; o match é exato (ignora \uFE0F e espaços nas bordas).
+create table if not exists radar_pe_audio_triggers (
+  id         uuid primary key default gen_random_uuid(),
+  emoji      text not null unique,
+  active     boolean not null default true,
+  created_at timestamptz not null default now()
+);
+
+insert into radar_pe_audio_triggers (emoji)
+values ('🎙️📁')
+on conflict (emoji) do nothing;
+
+-- Auditoria + idempotência dos áudios salvos. unique(chat_id, trigger_msg_id)
+-- garante que a MESMA mensagem de emoji não salva o áudio duas vezes (re-webhook,
+-- replay, etc.). status pendente → salvo/erro, preenchido pelo fluxo 08.
+create table if not exists radar_pe_audio_saves (
+  id             uuid primary key default gen_random_uuid(),
+  chat_id        uuid not null references radar_pe_chats(id) on delete cascade,
+  instance_name  text,
+  remote_jid     text,
+  contact_name   text,
+  phone          text,
+  trigger_msg_id text not null,              -- mensagem de emoji que disparou (idempotência)
+  audio_msg_id   text,                       -- msg_id do áudio salvo
+  audio_ts       timestamptz,
+  trigger_emoji  text,
+  filename       text,
+  drive_file_id  text,
+  drive_url      text,
+  status         text not null default 'pendente'
+                 check (status in ('pendente','salvo','erro')),
+  error          text,
+  created_at     timestamptz not null default now(),
+  updated_at     timestamptz not null default now(),
+  unique (chat_id, trigger_msg_id)
+);
+
+create index if not exists radar_pe_audio_saves_status_idx on radar_pe_audio_saves (status);
+create index if not exists radar_pe_audio_saves_created_idx on radar_pe_audio_saves (created_at);
+
+-- ---------------------------------------------------------------------------
 -- 4. Funções RPC (chamadas via Supabase REST /rest/v1/rpc/*)
 -- ---------------------------------------------------------------------------
 
@@ -937,6 +984,116 @@ begin
          last_sync_at     = now()
    where name = p_name;
   return true;
+end;
+$$;
+
+-- Reserva um salvamento de áudio (status 'pendente') para um gatilho de emoji.
+-- Insere com on conflict do nothing (unique chat_id+trigger_msg_id) e devolve
+-- {id, is_new}. is_new=false quando o gatilho já foi processado (dedup) ou quando
+-- a conversa não existe. Chamado pelo fluxo 08 antes do download/upload.
+create or replace function radar_pe_try_create_audio_save(
+  p_instance_name text,
+  p_remote_jid    text,
+  p_contact_name  text,
+  p_phone         text,
+  p_trigger_msg_id text,
+  p_audio_msg_id  text,
+  p_audio_ts      timestamptz,
+  p_trigger_emoji text
+) returns jsonb
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  v_chat_id uuid;
+  v_id      uuid;
+begin
+  perform set_config('radar_pe.is_auto', 'on', true);
+
+  select id into v_chat_id
+  from radar_pe_chats
+  where instance_name = p_instance_name and remote_jid = p_remote_jid;
+
+  if v_chat_id is null then
+    return jsonb_build_object('id', null, 'is_new', false);
+  end if;
+
+  insert into radar_pe_audio_saves
+    (chat_id, instance_name, remote_jid, contact_name, phone,
+     trigger_msg_id, audio_msg_id, audio_ts, trigger_emoji)
+  values
+    (v_chat_id, p_instance_name, p_remote_jid, p_contact_name, p_phone,
+     p_trigger_msg_id, p_audio_msg_id, p_audio_ts, p_trigger_emoji)
+  on conflict (chat_id, trigger_msg_id) do nothing
+  returning id into v_id;
+
+  if v_id is null then
+    return jsonb_build_object('id', null, 'is_new', false);
+  end if;
+
+  return jsonb_build_object('id', v_id, 'is_new', true);
+end;
+$$;
+
+-- Acha o último [audio] enviado pelo contato numa conversa, com nome/telefone.
+-- Usado pelo fluxo 08 (substitui o GET com filtro PostgREST, que quebrava em nome
+-- de instância com espaço). Retorna 1 linha (null se não há áudio) quando o chat
+-- existe; 0 linhas se a conversa não existe.
+create or replace function radar_pe_find_last_audio(
+  p_instance_name text,
+  p_remote_jid    text
+) returns table (
+  audio_msg_id text,
+  audio_ts     timestamptz,
+  contact_name text,
+  phone        text
+)
+language sql
+security invoker
+set search_path = public
+as $$
+  select a.msg_id, a.ts,
+         coalesce(k.contact_name, c.contact_name),
+         coalesce(k.phone, c.phone)
+  from radar_pe_chats c
+  left join radar_pe_contacts k on k.chat_id = c.id
+  left join lateral (
+    select m->>'msg_id' as msg_id, (m->>'ts')::timestamptz as ts
+    from jsonb_array_elements(coalesce(c.messages, '[]'::jsonb)) m
+    where coalesce((m->>'from_me')::boolean, false) = false
+      and coalesce(m->>'body', '') = '[audio]'
+      and m->>'msg_id' is not null
+    order by (m->>'ts')::timestamptz desc
+    limit 1
+  ) a on true
+  where c.instance_name = p_instance_name and c.remote_jid = p_remote_jid;
+$$;
+
+-- Marca o resultado do salvamento (salvo/erro) + referências do Drive.
+create or replace function radar_pe_mark_audio_save(
+  p_id            uuid,
+  p_status        text,
+  p_drive_file_id text,
+  p_drive_url     text,
+  p_filename      text,
+  p_error         text
+) returns void
+language plpgsql
+security invoker
+set search_path = public
+as $$
+begin
+  perform set_config('radar_pe.is_auto', 'on', true);
+
+  update radar_pe_audio_saves
+     set status        = p_status,
+         drive_file_id = p_drive_file_id,
+         drive_url     = p_drive_url,
+         filename      = p_filename,
+         error         = p_error,
+         updated_at    = now()
+   where id = p_id;
 end;
 $$;
 

@@ -87,3 +87,32 @@ export interface CasePhrase {
   active: boolean
   created_at: string
 }
+
+export type AudioSaveStatus = 'pendente' | 'salvo' | 'erro'
+
+export interface AudioTrigger {
+  id: string
+  emoji: string
+  active: boolean
+  created_at: string
+}
+
+export interface AudioSave {
+  id: string
+  chat_id: string
+  instance_name: string | null
+  remote_jid: string | null
+  contact_name: string | null
+  phone: string | null
+  trigger_msg_id: string | null
+  audio_msg_id: string | null
+  audio_ts: string | null
+  trigger_emoji: string | null
+  filename: string | null
+  drive_file_id: string | null
+  drive_url: string | null
+  status: AudioSaveStatus
+  error: string | null
+  created_at: string
+  updated_at: string
+}

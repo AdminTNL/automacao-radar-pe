@@ -34,6 +34,9 @@ Evolution (Postgres, cred "admin evo")  ──►  n8n  ──►  Supabase (rad
 | `n8n/05_health.json` | Cron diário: checa `connectionState` e marca sessões offline |
 | `n8n/06_radar_mensagem.json` | Sub: captura 1 mensagem "ao vivo" (webhook) — append + sinais + detecção |
 | `n8n/07_notion_create_page.json` | Sub: webhook → cria página no Notion (usa a credencial do node Notion) |
+| `n8n/08_salvar_audio.json` | Sub: detecta emoji-gatilho → chama o `09` pra baixar/sober o áudio |
+| `n8n/09_download_audio.json` | Sub: baixa o áudio (Evolution `getBase64FromMediaMessage`) e sobe no Google Drive (usado por 08 e 10) |
+| `n8n/10_reenviar_audio.json` | Sub: webhook → reenvia um áudio com erro pro Drive (chamado pelo Worker `/api/audio/resend`) |
 | `queries_validacao.md` | Queries pra conferir o resultado do backfill |
 | `arquitetura.md` | Desenho técnico (estado atual + Etapas 2b/3) pra alinhamento com o time |
 | `front/` | CRM básico (Vite + React + TS) pra ver/editar `radar_pe_contacts` |
@@ -72,6 +75,28 @@ Evolution (Postgres, cred "admin evo")  ──►  n8n  ──►  Supabase (rad
 - **Fluxo:** `Parse Mensagem` (Code: filtra 1:1, canonicaliza jid, extrai body, descarta status/trivial) → `Append Mensagem` (Supabase, RPC `radar_pe_append_message`).
 - **Como liga:** é chamado pelo fluxo global do n8n (`Webhook1` em `webhookn8n.tnledu.shop/webhook/evolution-connection`) via um nó `If` (`body.event == 'messages.upsert'`) + `Call`.
 
+### 07 — Notion Create Page (sub)
+
+- **Trigger:** Webhook (`POST /radar-notion`), chamado pelo Worker do Cloudflare (`POST /api/notion/pages`).
+- **Fluxo:** `Auth + Normalize` (checa `x-radar-secret`, normaliza os 13 campos) → `Create Page` (Notion) → `Respond` (devolve `page_id`/`url`).
+
+### 08 — Salvar Áudio (sub, tempo real)
+
+- **Trigger:** Execute Workflow Trigger — chamado pelo `06 - Radar Mensagem` (recebe a mensagem parseada), **só quando a mensagem é nossa** (gate `É nosso?` no `06`).
+- **Fluxo:** `Get Triggers` (emoji-gatilho ativos) → `É gatilho?` (Code: `from_me` + mensagem **contém** um emoji-gatilho; sem match → encerra) → `Find Último Áudio` (RPC `radar_pe_find_last_audio`, acha o último `[audio]` do contato) → `Prepara` (sem áudio → encerra) → `Try Create` (RPC `radar_pe_try_create_audio_save`, dedup por `chat_id+trigger_msg_id`) → `É novo?` (If) → `Dados p/ Download` (Set) → chama o `09 - Download Áudio` (baixa + sobe no Drive).
+- **Como liga:** o `06` chama o `08` em paralelo ao `Append Mensagem`, mas com um `If` `É nosso?` antes (só mensagens `from_me`). A consulta pesada (`Find Último Áudio`) só roda depois do match de emoji.
+
+### 09 — Download Áudio (sub, compartilhado)
+
+- **Trigger:** Execute Workflow Trigger — recebe `{ instance_name, audio_msg_id, contact_name, phone, audio_ts, save_id }`.
+- **Fluxo:** `Busca Mensagem Evo` (Postgres `admin evo`, pega `key`+`message` da Evolution) → `Monta Mensagem` → `FindMedia` (Evolution `getBase64FromMediaMessage`) → `Download OK?` (If) → `To Binary` (base64 → binary; nome `{YYYY-MM-DD_HHhmm}_{instance}_{nome}_{telefone}.{ext}`) → `Google Drive Upload` (pasta fixa) → `Upload OK?` (If) → `Mark Salvo` / `Mark Erro` (RPC `radar_pe_mark_audio_save`).
+- **Usado por:** `08` (salvamento automático) e `10` (reenvio manual).
+
+### 10 — Reenviar Áudio (webhook)
+
+- **Trigger:** Webhook `POST /radar-audio-resend` (auth `x-radar-secret`), chamado pelo Worker (`POST /api/audio/resend`).
+- **Fluxo:** `Auth + Parse` → `Get Row` (busca a linha em `radar_pe_audio_saves`) → `Prepara Reenvio` (guarda: não reenvia se já `salvo`; 404 se não existe) → chama o `09 - Download Áudio` → `Respond`.
+
 ## Modelo de dados (Supabase)
 
 - **`radar_pe_instances`** — sessões (`name`, `category`, `connection_state`, `offline`). Seed manual.
@@ -80,6 +105,8 @@ Evolution (Postgres, cred "admin evo")  ──►  n8n  ──►  Supabase (rad
 - **`radar_pe_contacts`** — registro de negócio ("todos os contatos"), com os campos da Botando pra Moer.
 - **`radar_pe_case_phrases`** — frases-gatilho do critério (1ª passagem), editável via SQL.
 - **`radar_pe_cases`** — possíveis casos de Radar (1 contato → N casos): fragmento congelado + aprovação do time.
+- **`radar_pe_audio_triggers`** — combinações de emoji que disparam o salvamento de áudio, editável via SQL (seed: `🎙️📁`).
+- **`radar_pe_audio_saves`** — auditoria dos áudios salvos no Drive (`pendente`/`salvo`/`erro`), idempotente por `(chat_id, trigger_msg_id)`.
 
 ### Por que o `radar_pe_chats` existe?
 
@@ -121,17 +148,18 @@ Em resumo: **Evolution** = fonte da verdade · **`radar_pe_chats`** = cópia de 
 1. Rodar `schema.sql` no Supabase.
 2. Seedar `radar_pe_instances` só com as sessões de PE (nome exato, com acento/espaço).
 3. Em base com dados já capturados, rodar uma vez: `select radar_pe_backfill_signals();` e `select radar_pe_detect_cases();` (preenche sinais e casos do histórico).
-4. Importar os 5 JSONs no n8n.
-5. Conectar credenciais: Postgres `admin evo` (nós `Find Chats`/`Find Messages`), Supabase (`Supabase account`), Evolution (health), e selecionar os sub-workflows nos mains.
+4. Importar os JSONs do n8n (01 a 10).
+5. Conectar credenciais: Postgres `admin evo` (nós `Find Chats`/`Find Messages`), Supabase (`Supabase account`), Evolution (health), Google Drive (no `09`), e selecionar os sub-workflows nos mains.
 6. Front: `cd front && npm install`, depois `npm run dev:full` (build + Worker local) ou `npm run dev` (Vite) com `wrangler dev` rodando em paralelo. Para local, copiar `.env.example` → `.dev.vars` e preencher os segredos.
 
 ## Front (CRM básico)
 
 - Vite + React + TS. O front fala com o Supabase **via Worker do Cloudflare** (`/api/db` faz proxy), nunca direto.
-- Abas: **Contatos** (lista/edita `radar_pe_contacts`), **Sessões** (gerencia instâncias + responsáveis) e **Casos pro Radar** (revisa e aprova/descarta possíveis casos; gerencia as frases-gatilho).
+- Abas: **Contatos** (lista/edita `radar_pe_contacts`), **Sessões** (gerencia instâncias + responsáveis), **Casos pro Radar** (revisa e aprova/descarta possíveis casos; gerencia as frases-gatilho) e **Áudios pra Campanha** (consulta o status dos áudios salvos, gerencia os emojis-gatilho e reenvia áudios com erro).
 - Lista `radar_pe_contacts` ordenada por `last_message_at` desc, com busca (nome/telefone), filtro por categoria e edição inline de nome/telefone (o trigger `radar_pe_contacts_touch` bumpa `updated_at` na edição).
 - **Auth:** senha única compartilhada (secret `APP_PASSWORD` no Cloudflare). O Worker checa a senha, emite cookie assinado (`AUTH_SECRET`) e só libera os dados para sessão válida. A service role key fica **só no Worker**, nunca no bundle.
 - **Encaminhamento pro Notion (Etapa 3):** aprovar um caso abre um form pré-preenchido (13 campos, espelhando o form atual) que, ao ser submetido, é enviado pelo Worker ao webhook do n8n (`POST /api/notion/pages` → `07 - Notion Create Page`). O n8n cria a página no database do Notion (com a credencial do node Notion) e devolve o `page_id`; o front marca o caso como `enviado` (salva o payload em `radar_pe_cases.encaminhamento`).
+- **Reenvio de áudio:** na aba "Áudios pra Campanha", o botão **Reenviar** chama `POST /api/audio/resend` → o Worker repassa pro webhook `10 - Reenviar Áudio` → o `09` baixa da Evolution e sobe no Drive de novo.
 
 ## Deploy (Cloudflare Workers)
 
@@ -143,6 +171,8 @@ wrangler secret put AUTH_SECRET                # ex.: openssl rand -base64 32
 wrangler secret put SUPABASE_SERVICE_ROLE_KEY
 wrangler secret put N8N_NOTION_WEBHOOK_URL     # URL do webhook "07 - Notion Create Page"
 wrangler secret put N8N_NOTION_WEBHOOK_SECRET  # mesmo segredo configurado no Code do 07
+wrangler secret put N8N_AUDIO_RESEND_WEBHOOK_URL     # URL do webhook "10 - Reenviar Áudio"
+wrangler secret put N8N_AUDIO_RESEND_WEBHOOK_SECRET  # mesmo segredo configurado no Code do 10
 wrangler deploy
 ```
 
@@ -178,6 +208,26 @@ Passos no n8n:
 3. No node **Auth + Normalize**: trocar `TROQUE_PELO_SEGREDO` por um segredo forte (ex.: `openssl rand -hex 32`) — e usar o **mesmo valor** no `N8N_NOTION_WEBHOOK_SECRET` do Worker.
 4. Ativar o workflow e copiar a **URL do webhook** (Production) pro `N8N_NOTION_WEBHOOK_URL` do Worker.
 
+## Setup Áudio → Google Drive
+
+O salvamento de áudio roda no n8n (workflow `08` → `09`) e é acionado pelo `06` quando o operador responde a um áudio com uma mensagem contendo um dos emojis cadastrados em `radar_pe_audio_triggers` (seed: `🎙️📁`).
+
+Passos no n8n:
+
+1. Importar o `08_salvar_audio.json`, `09_download_audio.json` e `10_reenviar_audio.json` (e o `06_radar_mensagem.json`, que já traz o nó `Salvar Áudio (08)`).
+2. No `09`, no node **Google Drive Upload**: selecionar a **credencial Google (OAuth)** já existente (substituir o placeholder `SELECIONE_CREDENCIAL_GOOGLE_DRIVE`). A pasta de destino já está preenchida (`1zRE-ZiyvfWO60sj4lwRZefX-vkZvWe7v`) — ajuste se quiser outra.
+3. Selecionar o sub-workflow **09 - Download Áudio** nos nós `Download Áudio (09)` do `08` e do `10`.
+4. No `10`, no node **Auth + Parse**: trocar `TROQUE_PELO_SEGREDO` por um segredo forte (ex.: `openssl rand -hex 32`) — e usar o **mesmo valor** no `N8N_AUDIO_RESEND_WEBHOOK_SECRET` do Worker. Ativar o `10` e copiar a **URL do webhook** (Production) pro `N8N_AUDIO_RESEND_WEBHOOK_URL`.
+5. Ajustar os emojis (via SQL ou pela aba "Áudios pra Campanha") se quiser trocar o gatilho:
+
+```sql
+insert into radar_pe_audio_triggers (emoji) values ('🔊📥')
+on conflict (emoji) do nothing;
+-- desativar o padrão: update radar_pe_audio_triggers set active = false where emoji = '🎙️📁';
+```
+
+> A Evolution devolve o áudio em base64 (o `To Binary` lê `base64` no topo ou em `media.base64`, e remove o prefixo `data:...;base64,`). Contatos `@lid` sem número podem não localizar a mídia — nesses casos o log fica como `erro` em `radar_pe_audio_saves`, e o time pode **Reenviar** pela aba do front.
+
 ## Roadmap
 
 - [X] Etapa 1 — captação (backfill + diário + health)
@@ -188,4 +238,5 @@ Passos no n8n:
 - [X] Etapa 2b (tempo real) — webhook global + `radar_pe_append_message` (SLA de segundos)
 - [ ] Etapa 2b (critério fino) — status/encaminhamento/`sent_to_radar` (com a Maíra)
 - [X] Etapa 3 — alimentar Radar Mobiliza PE (Notion) — aprovar abre form pré-preenchido → envia pro database
+- [X] Áudio → Drive — operador responde com emoji-gatilho e o último áudio do contato sobe pro Google Drive (workflows 08 → 09; aba "Áudios pra Campanha" com status + reenvio via 10)
 - [ ] Calibração (2–3 rodadas) + trocar frase do painel de campo
