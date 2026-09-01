@@ -49,6 +49,19 @@ create index if not exists radar_pe_chats_last_message_idx on radar_pe_chats (la
 -- Migração p/ bancos onde a tabela já existia antes da Etapa 2b.
 alter table radar_pe_chats add column if not exists messages jsonb;
 
+-- Cursor de avaliação do critério (Etapa 2b): até onde a detecção de casos já
+-- olhou. Só mensagens com ts > criterion_checkpoint abrem caso novo — assim o
+-- diário/backfill não re-varre o histórico inteiro a cada execução (e re-adicionar
+-- uma frase-gatilho não ressuscita casos retrô de mensagens antigas).
+-- A migração seta pra last_message_at nos chats existentes (o critério já viu
+-- tudo até aqui); chats sem mensagem ficam null (a detecção encerra cedo).
+alter table radar_pe_chats add column if not exists criterion_checkpoint timestamptz;
+
+update radar_pe_chats
+   set criterion_checkpoint = last_message_at
+ where criterion_checkpoint is null
+   and last_message_at is not null;
+
 -- ---------------------------------------------------------------------------
 -- 3. Contatos ("todos os contatos") — registro de negócio (Etapa 2)
 -- ---------------------------------------------------------------------------
@@ -176,8 +189,10 @@ create table if not exists radar_pe_case_phrases (
   created_at timestamptz not null default now()
 );
 
+-- Seed só roda se a tabela estiver VAZIA — re-executar o schema.sql não pode
+-- ressuscitar frases que o time deletou/desativou (on conflict não protege deleção).
 insert into radar_pe_case_phrases (phrase)
-values
+select * from (values
   ('Obrigado por compartilhar'),
   ('Obrigado pelo seu apoio'),
   ('Poder contar com seu apoio'),
@@ -185,7 +200,8 @@ values
   ('Vou checar e'),
   ('Vou verificar'),
   ('Vou levar esse tema')
-on conflict (phrase) do nothing;
+) v(phrase)
+where not exists (select 1 from radar_pe_case_phrases);
 
 -- 1 contato → N casos. Cada caso congela um trecho da conversa no momento da
 -- identificação e nunca é sobrescrito pelo desenrolar da conversa.
@@ -262,8 +278,8 @@ create table if not exists radar_pe_audio_triggers (
 );
 
 insert into radar_pe_audio_triggers (emoji)
-values ('🎙️📁')
-on conflict (emoji) do nothing;
+select * from (values ('🎙️📁')) v(emoji)
+where not exists (select 1 from radar_pe_audio_triggers);
 
 -- Auditoria + idempotência dos áudios salvos. unique(chat_id, trigger_msg_id)
 -- garante que a MESMA mensagem de emoji não salva o áudio duas vezes (re-webhook,
@@ -443,6 +459,8 @@ $$;
 -- radar_pe_case_phrases. Regra (1ª passagem): mensagem nossa (from_me) cujo body
 -- contém uma frase (ILIKE, substring). Congela as últimas v_context_size mensagens
 -- + o gatilho. Idempotente via unique(chat_id, trigger_msg_id).
+-- Só mensagens com ts > criterion_checkpoint abrem caso novo (e o cursor avança até
+-- a última mensagem no fim) — o diário/backfill não re-varre o histórico a cada vez.
 create or replace function radar_pe_detect_cases_for_chat(p_chat_id uuid)
 returns void
 language plpgsql
@@ -484,6 +502,14 @@ begin
       continue;
     end if;
 
+    -- só mensagens DEPOIS do criterion_checkpoint abrem caso novo. As anteriores
+    -- continuam no loop só pra compor o snapshot de contexto. Isso impede o
+    -- diário/backfill de re-varrer o histórico e ressuscitar casos retrô.
+    if coalesce((v_trigger->>'ts')::timestamptz, '-infinity'::timestamptz)
+       <= coalesce(v_chat.criterion_checkpoint, '-infinity'::timestamptz) then
+      continue;
+    end if;
+
     select p.phrase into v_phrase
     from radar_pe_case_phrases p
     where p.active
@@ -520,6 +546,15 @@ begin
        v_snapshot, v_contact.temperatura_sugerida)
     on conflict (chat_id, trigger_msg_id) do nothing;
   end loop;
+
+  -- avança o cursor do critério até a última mensagem (só mensagens futuras abrem caso)
+  if (v_msgs->-1->>'ts') is not null then
+    update radar_pe_chats
+       set criterion_checkpoint = greatest(
+             coalesce(criterion_checkpoint, '-infinity'::timestamptz),
+             (v_msgs->-1->>'ts')::timestamptz)
+     where id = p_chat_id;
+  end if;
 end;
 $$;
 
@@ -767,7 +802,9 @@ end;
 $$;
 
 -- Detecta casos de Radar em todos os chats (histórico). Idempotente. Rode uma vez
--- após aplicar o schema da Etapa 2b, e depois de ajustar as frases. Retorna quantos chats processou.
+-- após aplicar o schema da Etapa 2b (ou via migração, que já seta criterion_checkpoint
+-- = last_message_at — então ajustar frases depois NÃO re-varre mensagens antigas).
+-- Retorna quantos chats processou.
 create or replace function radar_pe_detect_cases()
 returns integer
 language plpgsql
