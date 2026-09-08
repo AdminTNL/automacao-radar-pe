@@ -23,8 +23,12 @@ alter table radar_pe_instances add column if not exists responsavel text;
 -- 1.1 Responsáveis (lista predefinida p/ atribuir nas sessões) — gerenciável pelo front
 -- ---------------------------------------------------------------------------
 create table if not exists radar_pe_responsaveis (
-  name               text primary key        -- nome da pessoa responsável
+  name               text primary key,       -- nome da pessoa responsável
+  notion_user_id     text                    -- id do usuário no workspace do Notion (p/ "people")
 );
+
+-- Migração p/ bancos onde a tabela já existia antes de ter o vínculo com o Notion.
+alter table radar_pe_responsaveis add column if not exists notion_user_id text;
 
 -- ---------------------------------------------------------------------------
 -- 2. Chats (um por contato/conversa) — camada de captação (Etapa 1)

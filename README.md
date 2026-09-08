@@ -33,10 +33,11 @@ Evolution (Postgres, cred "admin evo")  ──►  n8n  ──►  Supabase (rad
 | `n8n/04_diario_main.json` | Main: cron diário → lista instâncias → chama 03 |
 | `n8n/05_health.json` | Cron diário: checa `connectionState` e marca sessões offline |
 | `n8n/06_radar_mensagem.json` | Sub: captura 1 mensagem "ao vivo" (webhook) — append + sinais + detecção |
-| `n8n/07_notion_create_page.json` | Sub: webhook → cria página no Notion (usa a credencial do node Notion) |
-| `n8n/08_salvar_audio.json` | Sub: detecta emoji-gatilho → chama o `09` pra baixar/sober o áudio |
+| `n8n/07_notion_create_page.json` | Sub: webhook → cria página no Notion (usa a credencial do node Notion) || `n8n/08_salvar_audio.json` | Sub: detecta emoji-gatilho → chama o `09` pra baixar/sober o áudio |
 | `n8n/09_download_audio.json` | Sub: baixa o áudio (Evolution `getBase64FromMediaMessage`) e sobe no Google Drive (usado por 08 e 10) |
 | `n8n/10_reenviar_audio.json` | Sub: webhook → reenvia um áudio com erro pro Drive (chamado pelo Worker `/api/audio/resend`) |
+| `n8n/11_notion_list.json` | Sub: webhook → consulta o database "Radar Mobiliza PE" no Notion e devolve as páginas (usado pela aba "Radar Mobiliza PE") |
+| `n8n/12_notion_list_users.json` | Sub: webhook → lista os usuários do workspace do Notion (usado no vínculo de responsáveis no front) |
 | `queries_validacao.md` | Queries pra conferir o resultado do backfill |
 | `arquitetura.md` | Desenho técnico (estado atual + Etapas 2b/3) pra alinhamento com o time |
 | `front/` | CRM básico (Vite + React + TS) pra ver/editar `radar_pe_contacts` |
@@ -78,7 +79,8 @@ Evolution (Postgres, cred "admin evo")  ──►  n8n  ──►  Supabase (rad
 ### 07 — Notion Create Page (sub)
 
 - **Trigger:** Webhook (`POST /radar-notion`), chamado pelo Worker do Cloudflare (`POST /api/notion/pages`).
-- **Fluxo:** `Auth + Normalize` (checa `x-radar-secret`, normaliza os 13 campos) → `Create Page` (Notion) → `Respond` (devolve `page_id`/`url`).
+- **Fluxo:** `Auth + Normalize` (checa `x-radar-secret`, normaliza os 13 campos) → `Create Page` (Notion) → `Tem responsável?` (Switch) → se houver id de usuário do Notion, `Set Responsável (Notion)` (update da propriedade `people`) → `Respond` (devolve `page_id`/`url`).
+- **Responsável:** a propriedade "Responsável pelo contato" é **People** (usuário do workspace). O Worker resolve o nome do responsável (`radar_pe_responsaveis.notion_user_id`) e injeta `responsavel_notion_id`; sem id real (responsável não vinculado ou nome vazio) a página nasce **sem** responsável — nunca quebra.
 
 ### 08 — Salvar Áudio (sub, tempo real)
 
@@ -97,10 +99,16 @@ Evolution (Postgres, cred "admin evo")  ──►  n8n  ──►  Supabase (rad
 - **Trigger:** Webhook `POST /radar-audio-resend` (auth `x-radar-secret`), chamado pelo Worker (`POST /api/audio/resend`).
 - **Fluxo:** `Auth + Parse` → `Get Row` (busca a linha em `radar_pe_audio_saves`) → `Prepara Reenvio` (guarda: não reenvia se já `salvo`; 404 se não existe) → chama o `09 - Download Áudio` → `Respond`.
 
+### 11 — Notion List Pages (webhook)
+
+- **Trigger:** Webhook `GET /radar-notion-list` (auth `x-radar-secret`), chamado pelo Worker (`GET /api/notion/query`).
+- **Fluxo:** `Auth` (Code, valida o header) → `Get Pages` (Notion, `databasePage getAll` no database "Radar Mobiliza PE") → `Normalize` (Code: converte as propriedades cruas do Notion nas mesmas chaves do envio — `titulo`, `o_que_disse`, `area`, `status`...) → `Respond` (devolve `{ rows: [...] }`).
+- **Usado pela:** aba "Radar Mobiliza PE" do front (espelho somente-leitura do database do Notion). O mesmo segredo do `07` é usado no `Auth` (o Worker autentica com o `N8N_NOTION_WEBHOOK_SECRET`).
+
 ## Modelo de dados (Supabase)
 
 - **`radar_pe_instances`** — sessões (`name`, `category`, `connection_state`, `offline`). Seed manual.
-- **`radar_pe_responsaveis`** — lista de responsáveis (gerenciável no front), usada pra atribuir nas sessões.
+- **`radar_pe_responsaveis`** — lista de responsáveis (gerenciável no front), usada pra atribuir nas sessões; `notion_user_id` guarda o id do usuário no workspace do Notion (p/ preencher a propriedade "people").
 - **`radar_pe_chats`** — um por contato/conversa (`instance_name`, `remote_jid`, `contact_name`, `transcript`, `checkpoint`, ...). Único por `(instance_name, remote_jid)`.
 - **`radar_pe_contacts`** — registro de negócio ("todos os contatos"), com os campos da Botando pra Moer.
 - **`radar_pe_case_phrases`** — frases-gatilho do critério (1ª passagem), editável via SQL.
@@ -155,8 +163,8 @@ Em resumo: **Evolution** = fonte da verdade · **`radar_pe_chats`** = cópia de 
 ## Front (CRM básico)
 
 - Vite + React + TS. O front fala com o Supabase **via Worker do Cloudflare** (`/api/db` faz proxy), nunca direto.
-- Abas: **Contatos** (lista/edita `radar_pe_contacts`), **Sessões** (gerencia instâncias + responsáveis), **Casos pro Radar** (revisa e aprova/descarta possíveis casos; gerencia as frases-gatilho) e **Áudios pra Campanha** (consulta o status dos áudios salvos, gerencia os emojis-gatilho e reenvia áudios com erro).
-- Lista `radar_pe_contacts` ordenada por `last_message_at` desc, com busca (nome/telefone), filtro por categoria e edição inline de nome/telefone (o trigger `radar_pe_contacts_touch` bumpa `updated_at` na edição).
+- Abas: **Contatos** (lista/edita `radar_pe_contacts`), **Sessões** (gerencia instâncias + responsáveis), **Casos pro Radar** (revisa e aprova/descarta possíveis casos; gerencia as frases-gatilho), **Áudios pra Campanha** (consulta o status dos áudios salvos, gerencia os emojis-gatilho e reenvia áudios com erro) e **Radar Mobiliza PE** (espelho somente-leitura do database "Radar Mobiliza PE" no Notion — clique na linha abre um drawer com os detalhes e um botão "Abrir no Notion").
+- Lista `radar_pe_contacts` ordenada por `last_message_at` desc, com busca (nome/telefone), filtro por categoria, sessão, responsável e **filtro de período** (padrão: "Esta semana", segunda a hoje; também "Período completo" ou período personalizado por data) e edição inline de nome/telefone (o trigger `radar_pe_contacts_touch` bumpa `updated_at` na edição).
 - **Auth:** senha única compartilhada (secret `APP_PASSWORD` no Cloudflare). O Worker checa a senha, emite cookie assinado (`AUTH_SECRET`) e só libera os dados para sessão válida. A service role key fica **só no Worker**, nunca no bundle.
 - **Encaminhamento pro Notion (Etapa 3):** aprovar um caso abre um form pré-preenchido (13 campos, espelhando o form atual) que, ao ser submetido, é enviado pelo Worker ao webhook do n8n (`POST /api/notion/pages` → `07 - Notion Create Page`). O n8n cria a página no database do Notion (com a credencial do node Notion) e devolve o `page_id`; o front marca o caso como `enviado` (salva o payload em `radar_pe_cases.encaminhamento`).
 - **Reenvio de áudio:** na aba "Áudios pra Campanha", o botão **Reenviar** chama `POST /api/audio/resend` → o Worker repassa pro webhook `10 - Reenviar Áudio` → o `09` baixa da Evolution e sobe no Drive de novo.
@@ -171,6 +179,8 @@ wrangler secret put AUTH_SECRET                # ex.: openssl rand -base64 32
 wrangler secret put SUPABASE_SERVICE_ROLE_KEY
 wrangler secret put N8N_NOTION_WEBHOOK_URL     # URL do webhook "07 - Notion Create Page"
 wrangler secret put N8N_NOTION_WEBHOOK_SECRET  # mesmo segredo configurado no Code do 07
+wrangler secret put N8N_NOTION_LIST_WEBHOOK_URL  # URL do webhook "11 - Notion List Pages"
+wrangler secret put N8N_NOTION_USERS_WEBHOOK_URL  # URL do webhook "12 - Notion List Users"
 wrangler secret put N8N_AUDIO_RESEND_WEBHOOK_URL     # URL do webhook "10 - Reenviar Áudio"
 wrangler secret put N8N_AUDIO_RESEND_WEBHOOK_SECRET  # mesmo segredo configurado no Code do 10
 wrangler deploy
@@ -189,7 +199,7 @@ A criação da página no Notion é feita pelo **n8n** (que já tem a credencial
 | O que a pessoa disse | Text |
 | Área | Select |
 | Precisa de retorno | Select (Sim/Não) |
-| Responsável pelo contato | Text |
+| Responsável pelo contato | People (usuário do workspace) |
 | Pessoa | Text |
 | Telefone | Phone |
 | Data | Date |
@@ -198,8 +208,11 @@ A criação da página no Notion é feita pelo **n8n** (que já tem a credencial
 | Status | Status (ou Select) |
 | Fonte | Select |
 | Cidade | Select |
+| Sessão responsável pelo contato | Text |
 
 > As opções dos selects (Área, Urgência, Fonte, Cidade, Status) são livres — o form do front já envia os valores corretos; o Notion cria as opções automaticamente na primeira página.
+>
+> **Atenção:** a criação/edição de propriedades no database do Notion é **manual** (time). O campo "Sessão responsável pelo contato" só deve ser enviado depois que a propriedade existir no Notion — até lá, o `07` ignora o campo sem quebrar. O JSON `07_notion_create_page.json` deste repo pode estar defasado em relação ao workflow vivo no editor (mantido manualmente); **a referência é o workflow vivo**. O campo novo (`sessao`) foi adicionado tanto ao Auth+Normalize quanto ao Create Page — confira/sincronize no editor.
 
 Passos no n8n:
 
@@ -207,6 +220,22 @@ Passos no n8n:
 2. No node **Create Page**: selecionar a **credencial do Notion** já existente e o **database** "Radar Mobiliza PE" (substituir o placeholder `SELECIONE_DATABASE_NOTION`).
 3. No node **Auth + Normalize**: trocar `TROQUE_PELO_SEGREDO` por um segredo forte (ex.: `openssl rand -hex 32`) — e usar o **mesmo valor** no `N8N_NOTION_WEBHOOK_SECRET` do Worker.
 4. Ativar o workflow e copiar a **URL do webhook** (Production) pro `N8N_NOTION_WEBHOOK_URL` do Worker.
+
+### Setup do espelho (11 - Notion List Pages)
+
+1. Importar o `11_notion_list.json`.
+2. No node **Get Pages**: selecionar a mesma **credencial do Notion** e o **database** "Radar Mobiliza PE" (placeholders `SELECIONE_DATABASE_NOTION` / `SELECIONE_CREDENCIAL_NOTION`).
+3. No node **Auth**: usar o **mesmo segredo** do `07` (`TROQUE_PELO_SEGREDO`) — o Worker autentica com o `N8N_NOTION_WEBHOOK_SECRET` já configurado.
+4. Ativar o workflow (a URL de produção só registra o webhook ao ativar pelo **toggle no editor** — ativar via API não registra o path) e copiar a **URL do webhook** (Production, `https://webhookn8n.tnledu.shop/webhook/radar-notion-list`) pro `N8N_NOTION_LIST_WEBHOOK_URL` do Worker.
+
+### Setup da lista de usuários (12 - Notion List Users)
+
+1. Importar o `12_notion_list_users.json`.
+2. No node **Get Users**: selecionar a mesma **credencial do Notion** (`SELECIONE_CREDENCIAL_NOTION`).
+3. No node **Auth**: usar o **mesmo segredo** do `07` (`TROQUE_PELO_SEGREDO`).
+4. Ativar (se criar via API, o path só registra após um toggle no editor ou com `webhookId` setado no node) e copiar a **URL do webhook** (Production, `https://webhookn8n.tnledu.shop/webhook/radar-notion-users`) pro `N8N_NOTION_USERS_WEBHOOK_URL` do Worker.
+
+> **Atenção:** a integração do Notion no n8n só lista os usuários que a API `GET /users` devolve pra ela — normalmente só quem compartilhou algo com a integração. Pra listar o workspace inteiro é preciso habilitar **"Read user information"** na integração (ou criar uma integração nova com essa permissão e trocar o token no n8n). Sem isso, o picker de responsáveis no front mostra poucos usuários.
 
 ## Setup Áudio → Google Drive
 

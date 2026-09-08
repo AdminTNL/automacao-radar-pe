@@ -1,0 +1,140 @@
+{
+  "name": "12 - Notion List Users",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "radar-notion-users",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -160,
+        -80
+      ],
+      "id": "df09ec9d-cf9f-4b4d-bd55-cb86a64fce12",
+      "name": "Webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Segredo compartilhado com o Worker do Cloudflare (env N8N_NOTION_WEBHOOK_SECRET).\n// Mesmo segredo do 07 e do 11.\nconst SECRET = 'TROQUE_PELO_SEGREDO';\n\nconst item = $input.first().json || {};\nconst headers = item.headers || {};\n\nconst headerName = Object.keys(headers).find((k) => k.toLowerCase() === 'x-radar-secret');\nif (!headerName || headers[headerName] !== SECRET) {\n  throw new Error('x-radar-secret invalido ou ausente');\n}\n\nreturn [{ json: { ok: true } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        40,
+        -80
+      ],
+      "id": "dd027828-7ffd-4f96-b533-e0a28b3a89f1",
+      "name": "Auth"
+    },
+    {
+      "parameters": {
+        "resource": "user",
+        "operation": "getAll",
+        "returnAll": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        240,
+        -80
+      ],
+      "id": "0eb1bb54-c3d5-4333-884c-a4ce20cc4c6e",
+      "name": "Get Users",
+      "credentials": {
+        "notionApi": {
+          "id": "SELECIONE_CREDENCIAL_NOTION",
+          "name": "Notion (selecionar)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Lista os usuários do workspace do Notion (node user getAll) e normaliza\n// para { id, name, email }, mantendo só pessoas (type === 'person').\n\nconst users = $input.all()\n  .map(({ json }) => json)\n  .filter((u) => u && u.type === 'person');\n\nconst rows = users.map((u) => ({\n  id: u.id || '',\n  name: u.name || '',\n  email: (u.person && u.person.email) || '',\n}));\n\nreturn [{ json: { rows } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        -80
+      ],
+      "id": "6567935b-59e8-4a1f-a52c-34052f6067a0",
+      "name": "Normalize"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        640,
+        -80
+      ],
+      "id": "471b33cc-abf0-495c-8c39-c1d90510c31e",
+      "name": "Respond"
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Auth",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth": {
+      "main": [
+        [
+          {
+            "node": "Get Users",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Users": {
+      "main": [
+        [
+          {
+            "node": "Normalize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {}
+}

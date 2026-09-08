@@ -5,7 +5,7 @@ import { errorMessage, isOfflineError } from '../lib/errors'
 import { sendEncaminhamento } from '../lib/notion'
 import { useClosing } from '../lib/useClosing'
 import { fmtDate, isEmpty } from '../lib/format'
-import type { Case, CasePhrase, CaseStatus, EncaminhamentoForm, Instance } from '../types'
+import type { Case, CasePhrase, CaseStatus, EncaminhamentoForm, Instance, Responsavel } from '../types'
 import EditableText from './EditableText'
 import EncaminhamentoFormModal from './EncaminhamentoForm'
 
@@ -18,7 +18,7 @@ const STATUS_LABEL: Record<CaseStatus, string> = {
   enviado: 'Enviado',
 }
 
-const EDITABLE_STATUSES: CaseStatus[] = ['pendente', 'aprovado', 'descartado']
+const EDITABLE_STATUSES: CaseStatus[] = ['pendente', 'descartado']
 
 interface CasesTabProps {
   instances: Instance[]
@@ -35,6 +35,7 @@ export default function CasesTab({ instances, offline }: CasesTabProps) {
   const [hasMore, setHasMore] = useState(false)
   const [activeCase, setActiveCase] = useState<Case | null>(null)
   const [encaminhando, setEncaminhando] = useState<Case | null>(null)
+  const [responsaveis, setResponsaveis] = useState<Responsavel[]>([])
   const [toast, setToast] = useState<string | null>(null)
   const prevMaxCreatedAtRef = useRef<string | null>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -58,6 +59,26 @@ export default function CasesTab({ instances, offline }: CasesTabProps) {
     }
     return m
   }, [instances])
+
+  const loadResponsaveis = useCallback(async () => {
+    const rows: { name: string; notion_user_id?: string | null }[] = []
+    const { data, error } = await supabase
+      .from('radar_pe_responsaveis')
+      .select('name, notion_user_id')
+      .order('name')
+    if (data) {
+      rows.push(...(data as { name: string; notion_user_id: string | null }[]))
+    } else if (error) {
+      // antes da migração (coluna notion_user_id) a lista cai pra só nomes
+      const fallback = await supabase.from('radar_pe_responsaveis').select('name').order('name')
+      if (fallback.data) rows.push(...(fallback.data as { name: string }[]))
+    }
+    setResponsaveis(rows.map((r) => ({ name: r.name, notion_user_id: r.notion_user_id ?? null })))
+  }, [])
+
+  useEffect(() => {
+    void loadResponsaveis()
+  }, [loadResponsaveis])
 
   const fetchFirstPage = useCallback(async () => {
     return supabase
@@ -169,7 +190,9 @@ export default function CasesTab({ instances, offline }: CasesTabProps) {
     setActiveCase((cur) => (cur && cur.id === id ? { ...cur, status } : cur))
   }
 
-  const openEncaminhamento = (cas: Case) => {
+  const openEncaminhamento = async (cas: Case) => {
+    // refresh leve pra pegar responsável cadastrado recentemente
+    await loadResponsaveis()
     setEncaminhando(cas)
   }
 
@@ -291,13 +314,17 @@ export default function CasesTab({ instances, offline }: CasesTabProps) {
         <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
           <option value="">Todos os status</option>
           <option value="pendente">Pendentes</option>
-          <option value="aprovado">Aprovados</option>
           <option value="descartado">Descartados</option>
           <option value="enviado">Enviados</option>
         </select>
         <button type="button" className="refresh" onClick={() => void openPhrases()}>
           Frases-gatilho
         </button>
+      </div>
+
+      <div className="panel-note">
+        Casos que o sistema identifica como candidatos ao Radar. Revise os pendentes, encaminhe os
+        que fizerem sentido (isso cria o registro no Notion) ou descarte os que não forem caso.
       </div>
 
       {error && <div className="error">Erro: {error}</div>}
@@ -386,6 +413,7 @@ export default function CasesTab({ instances, offline }: CasesTabProps) {
         <EncaminhamentoFormModal
           cas={encaminhando}
           responsavel={responsavelByInstance.get(encaminhando.instance_name ?? '') ?? ''}
+          responsaveis={responsaveis}
           onClose={() => setEncaminhando(null)}
           onSubmit={submitEncaminhamento}
         />
@@ -565,7 +593,7 @@ function CaseDrawer({ cas, onClose, onSetStatus, onApprove }: CaseDrawerProps) {
                 disabled={saving}
                 onClick={onApprove}
               >
-                {cas.status === 'aprovado' ? 'Encaminhar' : 'Aprovar'}
+                Encaminhar
               </button>
               <button
                 type="button"

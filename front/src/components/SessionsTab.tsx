@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { errorMessage } from '../lib/errors'
 import { fmtDate } from '../lib/format'
-import type { Instance } from '../types'
+import { listNotionUsers, type NotionUser } from '../lib/notion'
+import type { Instance, Responsavel } from '../types'
 
 const CATEGORIES = ['TÔ COM JOÃO', 'MOBILIZA', 'CHEGA JUNTO PE', 'IR']
 
@@ -28,9 +29,12 @@ export default function SessionsTab({ instances, offline, onChanged }: SessionsT
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
-  const [responsaveis, setResponsaveis] = useState<string[]>([])
+  const [responsaveis, setResponsaveis] = useState<Responsavel[]>([])
   const [showRespForm, setShowRespForm] = useState(false)
   const [newRespName, setNewRespName] = useState('')
+  const [newRespNotion, setNewRespNotion] = useState('')
+  const [notionUsers, setNotionUsers] = useState<NotionUser[]>([])
+  const [respLoadingUsers, setRespLoadingUsers] = useState(false)
   const [respSaving, setRespSaving] = useState(false)
   const [respError, setRespError] = useState<string | null>(null)
 
@@ -41,9 +45,22 @@ export default function SessionsTab({ instances, offline, onChanged }: SessionsT
   }, [success])
 
   const loadResponsaveis = useCallback(async () => {
-    const { data } = await supabase.from('radar_pe_responsaveis').select('name').order('name')
-    setResponsaveis(((data ?? []) as { name: string }[]).map((r) => r.name))
+    const rows: { name: string; notion_user_id?: string | null }[] = []
+    const { data, error } = await supabase
+      .from('radar_pe_responsaveis')
+      .select('name, notion_user_id')
+      .order('name')
+    if (data) {
+      rows.push(...(data as { name: string; notion_user_id: string | null }[]))
+    } else if (error) {
+      // antes da migração (coluna notion_user_id) a lista cai pra só nomes
+      const fallback = await supabase.from('radar_pe_responsaveis').select('name').order('name')
+      if (fallback.data) rows.push(...(fallback.data as { name: string }[]))
+    }
+    setResponsaveis(rows.map((r) => ({ name: r.name, notion_user_id: r.notion_user_id ?? null })))
   }, [])
+
+  const responsavelNames = useMemo(() => responsaveis.map((r) => r.name), [responsaveis])
 
   useEffect(() => {
     void loadResponsaveis()
@@ -131,16 +148,33 @@ export default function SessionsTab({ instances, offline, onChanged }: SessionsT
     onChanged()
   }
 
-  const openRespForm = () => {
+  const openRespForm = async () => {
     setNewRespName('')
+    setNewRespNotion('')
     setRespError(null)
     setShowRespForm(true)
+    setRespLoadingUsers(true)
+    try {
+      setNotionUsers(await listNotionUsers())
+    } catch {
+      setNotionUsers([])
+    } finally {
+      setRespLoadingUsers(false)
+    }
   }
 
   const closeRespForm = () => {
     if (respSaving) return
     setShowRespForm(false)
     setRespError(null)
+  }
+
+  const onNotionUserChange = (id: string) => {
+    setNewRespNotion(id)
+    if (!newRespName.trim()) {
+      const u = notionUsers.find((x) => x.id === id)
+      if (u && u.name) setNewRespName(u.name)
+    }
   }
 
   const addResponsavel = async () => {
@@ -153,12 +187,15 @@ export default function SessionsTab({ instances, offline, onChanged }: SessionsT
     setRespError(null)
 
     try {
-      const { error } = await supabase.from('radar_pe_responsaveis').insert({ name })
+      const { error } = await supabase
+        .from('radar_pe_responsaveis')
+        .insert({ name, notion_user_id: newRespNotion.trim() || null })
 
       if (error) {
         setRespError(error.code === '23505' ? 'Já existe esse responsável.' : errorMessage(error))
       } else {
         setNewRespName('')
+        setNewRespNotion('')
         setShowRespForm(false)
         setNewResponsavel(name)
         await loadResponsaveis()
@@ -196,6 +233,11 @@ export default function SessionsTab({ instances, offline, onChanged }: SessionsT
         </button>
       </div>
 
+      <div className="panel-note">
+        Aqui você acompanha as sessões do WhatsApp conectadas e quem é o responsável por cada uma.
+        Use para cadastrar uma sessão nova ou cadastrar/editar responsáveis.
+      </div>
+
       {success && <div className="success">{success}</div>}
 
       <div className="table-wrap">
@@ -228,11 +270,11 @@ export default function SessionsTab({ instances, offline, onChanged }: SessionsT
                 </td>
                 <td>
                   <select
-                    value={responsaveis.includes(inst.responsavel ?? '') ? (inst.responsavel ?? '') : ''}
+                    value={responsavelNames.includes(inst.responsavel ?? '') ? (inst.responsavel ?? '') : ''}
                     onChange={(e) => void updateResponsavel(inst.name, e.target.value)}
                   >
                     <option value="">—</option>
-                    {responsaveis.map((r) => (
+                    {responsavelNames.map((r) => (
                       <option key={r} value={r}>
                         {r}
                       </option>
@@ -307,7 +349,7 @@ export default function SessionsTab({ instances, offline, onChanged }: SessionsT
                     onChange={(e) => setNewResponsavel(e.target.value)}
                   >
                     <option value="">Sem responsável</option>
-                    {responsaveis.map((r) => (
+                    {responsavelNames.map((r) => (
                       <option key={r} value={r}>
                         {r}
                       </option>
@@ -352,6 +394,34 @@ export default function SessionsTab({ instances, offline, onChanged }: SessionsT
                   onChange={(e) => setNewRespName(e.target.value)}
                   autoFocus
                 />
+              </label>
+              <label className="modal-field">
+                <span>Usuário no Notion</span>
+                <select
+                  value={notionUsers.some((u) => u.id === newRespNotion) ? newRespNotion : ''}
+                  onChange={(e) => onNotionUserChange(e.target.value)}
+                  disabled={respLoadingUsers}
+                >
+                  <option value="">Escolher usuário…</option>
+                  {notionUsers.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.name}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  className="search"
+                  type="text"
+                  placeholder="Cole aqui o ID do usuário (opcional)"
+                  value={newRespNotion}
+                  onChange={(e) => setNewRespNotion(e.target.value.trim())}
+                />
+                <span className="modal-hint">
+                  {respLoadingUsers
+                    ? 'Carregando usuários…'
+                    : 'Selecione o usuário no Notion se o nome aparecer na lista. Se precisar de ajuda, peça a alguém do time de tecnologia.'}{' '}
+                  Pode cadastrar sem usuário no Notion deixando o campo em branco.
+                </span>
               </label>
               {respError && <div className="error">Erro: {respError}</div>}
             </div>

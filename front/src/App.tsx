@@ -9,9 +9,10 @@ import ContactsTab from './components/ContactsTab'
 import SessionsTab from './components/SessionsTab'
 import CasesTab from './components/CasesTab'
 import AudiosTab from './components/AudiosTab'
+import RadarTab from './components/RadarTab'
 import Login from './components/Login'
 
-type Tab = 'contatos' | 'sessoes' | 'casos' | 'audios'
+type Tab = 'contatos' | 'sessoes' | 'casos' | 'audios' | 'radar'
 type AuthState = 'loading' | 'authed' | 'guest'
 
 export default function App() {
@@ -149,6 +150,13 @@ export default function App() {
         >
           Áudios pra Campanha
         </button>
+        <button
+          type="button"
+          className={`tab ${activeTab === 'radar' ? 'tab-active' : ''}`}
+          onClick={() => openTab('radar')}
+        >
+          Radar Mobiliza PE
+        </button>
       </nav>
 
       {offline ? (
@@ -163,6 +171,8 @@ export default function App() {
         <SessionsTab instances={instances} offline={offline} onChanged={() => void loadInstances()} />
       ) : activeTab === 'casos' ? (
         <CasesTab instances={instances} offline={offline} />
+      ) : activeTab === 'radar' ? (
+        <RadarTab offline={offline} />
       ) : (
         <AudiosTab instances={instances} offline={offline} />
       )}

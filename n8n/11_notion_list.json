@@ -1,0 +1,147 @@
+{
+  "name": "11 - Notion List Pages",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "radar-notion-list",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "24e4a6da-97fc-4658-ad16-94c7ddbf8131",
+      "name": "Webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Segredo compartilhado com o Worker do Cloudflare (env N8N_NOTION_WEBHOOK_SECRET).\n// Troque 'TROQUE_PELO_SEGREDO' pelo mesmo valor configurado no Worker (e no 07).\nconst SECRET = 'TROQUE_PELO_SEGREDO';\n\nconst item = $input.first().json || {};\nconst headers = item.headers || {};\n\nconst headerName = Object.keys(headers).find((k) => k.toLowerCase() === 'x-radar-secret');\nif (!headerName || headers[headerName] !== SECRET) {\n  throw new Error('x-radar-secret invalido ou ausente');\n}\n\nreturn [{ json: { ok: true } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "id": "6a41b9db-1bc8-4ff9-80bd-a9776af1cfa6",
+      "name": "Auth"
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "getAll",
+        "databaseId": {
+          "__rl": true,
+          "value": "SELECIONE_DATABASE_NOTION",
+          "mode": "list",
+          "cachedResultName": "Radar Mobiliza PE",
+          "cachedResultUrl": "https://app.notion.com/p/5c501c99705444a884b9e4cfb4dbc1b8"
+        },
+        "returnAll": true,
+        "simple": false,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        448,
+        0
+      ],
+      "id": "78ab1c03-9a29-4842-a432-21e428782efb",
+      "name": "Get Pages",
+      "credentials": {
+        "notionApi": {
+          "id": "SELECIONE_CREDENCIAL_NOTION",
+          "name": "Notion (selecionar)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Lê as páginas do database \"Radar Mobiliza PE\" (dado cru da API do Notion) e\n// normaliza para as mesmas chaves usadas no envio (07/EncaminhamentoForm).\n\nconst plainText = (arr) =>\n  Array.isArray(arr) ? arr.map((t) => (t && t.plain_text) || '').join('') : '';\n\nconst valueOf = (prop) => {\n  if (!prop) return '';\n  const type = prop.type;\n  if (type === 'title' || type === 'rich_text') return plainText(prop[type]);\n  if (type === 'select') return (prop.select && prop.select.name) || '';\n  if (type === 'status') return (prop.status && prop.status.name) || '';\n  if (type === 'phone_number') return prop.phone_number || '';\n  if (type === 'date') return (prop.date && prop.date.start) || '';\n  if (type === 'url') return prop.url || '';\n  if (type === 'people')\n    return ((prop.people || []).map((p) => (p && p.name) || '').filter(Boolean)).join(', ');\n  return '';\n};\n\nconst peopleIdsOf = (prop) => {\n  if (!prop || prop.type !== 'people') return [];\n  return (prop.people || [])\n    .map((p) => (p && p.id) || '')\n    .filter((id) => id && id.length > 0);\n};\n\nconst pages = $input.all()\n  .map(({ json }) => json)\n  .filter((p) => p && !p.archived);\n\nconst rows = pages.map((page) => {\n  const props = page.properties || {};\n  const tituloProp = Object.values(props).find((p) => p && p.type === 'title');\n  const g = (name) => valueOf(props[name]);\n  return {\n    page_id: page.id,\n    url: page.url || '',\n    titulo: plainText((tituloProp && tituloProp.title) || []) || 'Sem título',\n    o_que_disse: g('O que a pessoa disse'),\n    area: g('Área'),\n    precisa_retorno: g('Precisa de retorno'),\n    responsavel: g('Responsável pelo contato'),\n    responsavel_id: (peopleIdsOf(props['Responsável pelo contato'])[0] || ''),\n    pessoa: g('Pessoa'),\n    telefone: g('Telefone'),\n    data: g('Data'),\n    urgencia: g('Urgência'),\n    o_que_fizemos: g('O que a gente fez'),\n    status: g('Status'),\n    fonte: g('Fonte'),\n    cidade: g('Cidade'),\n    sessao_responsavel: g('Sessão responsável pelo contato'),\n  };\n});\n\nreturn [{ json: { rows } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "id": "188625a6-b3ef-478d-b6a8-a16722ca5143",
+      "name": "Normalize"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        880,
+        0
+      ],
+      "id": "0da174ca-a4fc-4a64-b741-55fb778a5027",
+      "name": "Respond"
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Auth",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth": {
+      "main": [
+        [
+          {
+            "node": "Get Pages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Pages": {
+      "main": [
+        [
+          {
+            "node": "Normalize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {}
+}

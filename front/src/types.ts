@@ -15,6 +15,11 @@ export interface Instance {
   offline: boolean
 }
 
+export interface Responsavel {
+  name: string
+  notion_user_id: string | null
+}
+
 export interface Contact {
   id: string
   chat_id: string
@@ -56,6 +61,7 @@ export interface EncaminhamentoForm {
   status: string
   fonte: string
   cidade: string
+  sessao: string
 }
 
 export interface Case {
@@ -115,4 +121,23 @@ export interface AudioSave {
   error: string | null
   created_at: string
   updated_at: string
+}
+
+export interface NotionRadarRow {
+  page_id: string
+  url: string | null
+  titulo: string
+  o_que_disse: string
+  area: string
+  precisa_retorno: string
+  responsavel: string
+  pessoa: string
+  telefone: string
+  data: string
+  urgencia: string
+  o_que_fizemos: string
+  status: string
+  fonte: string
+  cidade: string
+  sessao_responsavel: string
 }

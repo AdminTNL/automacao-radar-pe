@@ -157,6 +157,20 @@ mensagem nossa (emoji-gatilho) → 06 (append + gate from_me) → 08 - Salvar Á
 - **Identificação do contato** no nome do arquivo: `{data}_{instance}_{nome}_{telefone}.ogg`.
 - **Limitação:** contato `@lid` sem número pode falhar no `findMedia` (jid canônico difere) → log `erro`, não trava.
 
+## Espelho do Radar Mobiliza PE (aba do front)
+
+A aba **"Radar Mobiliza PE"** espelha o database "Radar Mobiliza PE" (Notion) em somente leitura, pra equipe consultar sem abrir o Notion (inclusive entradas criadas/alteradas fora da ferramenta). Não há leitura direta do Notion pelo Worker — a credencial do Notion vive no n8n (mesmo padrão do envio, workflow `07`).
+
+```
+RadarTab (front) → GET /api/notion/query (Worker) → 11 - Notion List Pages (n8n, webhook GET /radar-notion-list)
+   → Notion getAll (database "Radar Mobiliza PE") → Normalize (Code) → { rows } → front
+```
+
+- O `Auth` do `11` reusa o mesmo segredo do `07` (`x-radar-secret`); o Worker autentica com o `N8N_NOTION_WEBHOOK_SECRET`.
+- O `Normalize` converte as propriedades cruas do Notion (title/rich_text/select/status/phone_number/date) nas mesmas chaves usadas no envio (`07`/form), devolvendo `{ rows: [...] }`.
+- A aba carrega na abertura + botão **Atualizar** manual (evita chamadas desnecessárias à API do Notion a cada auto-refresh).
+- **Registro do webhook:** ativar um workflow novo por API **não** registra o path no servidor de webhooks — precisa de um toggle ativar/desativar no editor do n8n uma vez.
+
 ## Frequência e gatilhos
 
 - **Diário** (cron 8h): captação incremental em batch. Fica como **reconciliação/rede de segurança** do tempo real.

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { MUNICIPIOS_PE } from '../lib/municipios'
 import { useClosing } from '../lib/useClosing'
-import type { Case, EncaminhamentoForm } from '../types'
+import type { Case, EncaminhamentoForm, Responsavel } from '../types'
 
 const AREAS = [
   'Mobilização',
@@ -41,6 +41,7 @@ function todayISO(): string {
 interface EncaminhamentoFormProps {
   cas: Case
   responsavel: string
+  responsaveis: Responsavel[]
   onClose: () => void
   onSubmit: (form: EncaminhamentoForm) => Promise<void>
 }
@@ -48,15 +49,19 @@ interface EncaminhamentoFormProps {
 export default function EncaminhamentoForm({
   cas,
   responsavel,
+  responsaveis,
   onClose,
   onSubmit,
 }: EncaminhamentoFormProps) {
+  // Só começa com o responsável da sessão se ele estiver entre os cadastrados;
+  // caso contrário cai pra "—" (o envio não pode inventar nome fora da lista).
+  const responsavelInicial = responsaveis.some((r) => r.name === responsavel) ? responsavel : ''
   const [form, setForm] = useState<EncaminhamentoForm>(() => ({
     titulo: '',
     o_que_disse: contactLines(cas.transcript_snapshot),
     area: '',
     precisa_retorno: 'Não',
-    responsavel,
+    responsavel: responsavelInicial,
     pessoa: cas.contact_name ?? '',
     telefone: cas.phone ?? '',
     data: todayISO(),
@@ -65,6 +70,7 @@ export default function EncaminhamentoForm({
     status: 'Novo',
     fonte: '',
     cidade: '',
+    sessao: cas.instance_name ?? '',
   }))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -79,6 +85,10 @@ export default function EncaminhamentoForm({
 
   const submit = async () => {
     if (saving) return
+    if (!form.titulo.trim()) {
+      setError('Informe o título do caso.')
+      return
+    }
     setSaving(true)
     setError(null)
     try {
@@ -113,13 +123,14 @@ export default function EncaminhamentoForm({
           </p>
 
           <label className="modal-field">
-            <span>Título</span>
+            <span>Título *</span>
             <input
               className="search"
               type="text"
               value={form.titulo}
               placeholder="Título do caso"
               onChange={(e) => setField('titulo', e.target.value)}
+              required
               autoFocus
             />
           </label>
@@ -159,11 +170,31 @@ export default function EncaminhamentoForm({
 
           <label className="modal-field">
             <span>Responsável pelo contato</span>
+            <select value={form.responsavel} onChange={(e) => setField('responsavel', e.target.value)}>
+              <option value="">—</option>
+              {responsaveis.map((r) => (
+                <option key={r.name} value={r.name}>
+                  {r.name}
+                  {r.notion_user_id ? '' : '  (sem usuário no Notion)'}
+                </option>
+              ))}
+            </select>
+            {form.responsavel &&
+              !responsaveis.find((r) => r.name === form.responsavel)?.notion_user_id && (
+                <span className="modal-hint">
+                  Esse responsável ainda não tem usuário no Notion — a página vai ser criada sem
+                  preencher o campo. Peça a alguém do time de tecnologia pra vincular.
+                </span>
+              )}
+          </label>
+
+          <label className="modal-field">
+            <span>Sessão responsável pelo contato</span>
             <input
               className="search"
               type="text"
-              value={form.responsavel}
-              onChange={(e) => setField('responsavel', e.target.value)}
+              value={form.sessao}
+              onChange={(e) => setField('sessao', e.target.value)}
             />
           </label>
 

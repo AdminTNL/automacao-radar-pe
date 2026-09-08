@@ -11,43 +11,39 @@
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [
-        0,
-        0
+        -32,
+        -112
       ],
-      "id": "d1a1b1c1-0001-4000-8000-000000000007",
+      "id": "55938b19-049d-4aa5-8968-c62270a7bfc9",
       "name": "Webhook"
     },
     {
       "parameters": {
-        "jsCode": "// Segredo compartilhado com o Worker do Cloudflare (env N8N_NOTION_WEBHOOK_SECRET).\n// Troque 'TROQUE_PELO_SEGREDO' pelo mesmo valor configurado no Worker.\nconst SECRET = 'TROQUE_PELO_SEGREDO';\n\nconst item = $input.first().json || {};\nconst headers = item.headers || {};\n\nconst headerName = Object.keys(headers).find((k) => k.toLowerCase() === 'x-radar-secret');\nif (!headerName || headers[headerName] !== SECRET) {\n  throw new Error('x-radar-secret invalido ou ausente');\n}\n\nconst b = item.body || item;\n\nreturn [{\n  json: {\n    titulo: (b.titulo && String(b.titulo).trim()) || 'Sem título',\n    o_que_disse: b.o_que_disse ?? '',\n    area: b.area ?? '',\n    precisa_retorno: b.precisa_retorno ?? '',\n    responsavel: b.responsavel ?? '',\n    pessoa: b.pessoa ?? '',\n    telefone: b.telefone ?? '',\n    data: b.data ?? '',\n    urgencia: b.urgencia ?? '',\n    o_que_fizemos: b.o_que_fizemos ?? '',\n    status: b.status ?? '',\n    fonte: b.fonte ?? '',\n    cidade: b.cidade ?? '',\n  },\n}];"
+        "jsCode": "// Segredo compartilhado com o Worker do Cloudflare (env N8N_NOTION_WEBHOOK_SECRET).\n// Troque 'TROQUE_PELO_SEGREDO' pelo mesmo valor configurado no Worker.\nconst SECRET = 'TROQUE_PELO_SEGREDO';\n\nconst item = $input.first().json || {};\nconst headers = item.headers || {};\n\nconst headerName = Object.keys(headers).find((k) => k.toLowerCase() === 'x-radar-secret');\nif (!headerName || headers[headerName] !== SECRET) {\n  throw new Error('x-radar-secret invalido ou ausente');\n}\n\nconst b = item.body || item;\n\nreturn [{\n  json: {\n    titulo: (b.titulo && String(b.titulo).trim()) || 'Sem título',\n    o_que_disse: b.o_que_disse ?? '',\n    area: b.area ?? '',\n    precisa_retorno: b.precisa_retorno ?? '',\n    responsavel: b.responsavel ?? '',\n    pessoa: b.pessoa ?? '',\n    telefone: b.telefone ?? '',\n    data: b.data ?? '',\n    urgencia: b.urgencia ?? '',\n    o_que_fizemos: b.o_que_fizemos ?? '',\n    status: b.status ?? '',\n    fonte: b.fonte ?? '',\n    cidade: b.cidade ?? '',\n    sessao: b.sessao ?? '',\n    responsavel_notion_id: (b.responsavel_notion_id && String(b.responsavel_notion_id).trim()) || '',\n  },\n}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        220,
-        0
+        192,
+        -112
       ],
-      "id": "d1a1b1c1-0002-4000-8000-000000000007",
+      "id": "1c9824e2-339f-4a22-98f1-bf1d6202d904",
       "name": "Auth + Normalize"
     },
     {
       "parameters": {
         "resource": "databasePage",
-        "operation": "create",
-        "authentication": "apiKey",
         "databaseId": {
           "__rl": true,
           "value": "SELECIONE_DATABASE_NOTION",
           "mode": "id"
         },
         "title": "={{ $json.titulo }}",
-        "simple": true,
         "propertiesUi": {
           "propertyValues": [
             {
               "key": "O que a pessoa disse|rich_text",
               "type": "rich_text",
-              "richText": false,
               "textContent": "={{ $json.o_que_disse }}"
             },
             {
@@ -61,15 +57,8 @@
               "selectValue": "={{ $json.precisa_retorno }}"
             },
             {
-              "key": "Responsável pelo contato|rich_text",
-              "type": "rich_text",
-              "richText": false,
-              "textContent": "={{ $json.responsavel }}"
-            },
-            {
               "key": "Pessoa|rich_text",
               "type": "rich_text",
-              "richText": false,
               "textContent": "={{ $json.pessoa }}"
             },
             {
@@ -80,10 +69,8 @@
             {
               "key": "Data|date",
               "type": "date",
-              "range": false,
               "includeTime": false,
-              "date": "={{ $json.data }}",
-              "timezone": "default"
+              "date": "={{ $json.data }}"
             },
             {
               "key": "Urgência|select",
@@ -93,11 +80,10 @@
             {
               "key": "O que a gente fez|rich_text",
               "type": "rich_text",
-              "richText": false,
               "textContent": "={{ $json.o_que_fizemos }}"
             },
             {
-              "key": "Status|status",
+              "key": "Status|select",
               "type": "status",
               "statusValue": "={{ $json.status }}"
             },
@@ -107,9 +93,8 @@
               "selectValue": "={{ $json.fonte }}"
             },
             {
-              "key": "Cidade|select",
-              "type": "select",
-              "selectValue": "={{ $json.cidade }}"
+              "key": "Sessão responsável pelo contato|rich_text",
+              "textContent": "={{ $json.sessao }}"
             }
           ]
         },
@@ -118,10 +103,10 @@
       "type": "n8n-nodes-base.notion",
       "typeVersion": 2.2,
       "position": [
-        440,
-        0
+        416,
+        -112
       ],
-      "id": "d1a1b1c1-0003-4000-8000-000000000007",
+      "id": "df8f61d4-8fb5-4f22-9465-b79603ae85d8",
       "name": "Create Page",
       "credentials": {
         "notionApi": {
@@ -148,11 +133,89 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.2,
       "position": [
-        660,
-        0
+        640,
+        -112
       ],
-      "id": "d1a1b1c1-0004-4000-8000-000000000007",
+      "id": "f1534ccf-bb5c-46d9-9585-613d8987a6a9",
       "name": "Respond"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "fb3557ba363749799e317cdc51e4b9ae",
+                    "leftValue": "={{ $json.responsavel_notion_id }}",
+                    "rightValue": "",
+                    "operator": {
+                      "type": "string",
+                      "operation": "notEquals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        656,
+        -112
+      ],
+      "id": "0e777424934f4f8a991a0bd6af68ab91",
+      "name": "Tem responsável?"
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "update",
+        "pageId": {
+          "__rl": true,
+          "value": "={{ $json.id }}",
+          "mode": "id"
+        },
+        "simple": false,
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Responsável pelo contato|people",
+              "type": "people",
+              "peopleValue": "={{ $json.responsavel_notion_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        896,
+        -180
+      ],
+      "id": "2347cef142c348babd0467ced2b1e67f",
+      "name": "Set Responsável (Notion)",
+      "credentials": {
+        "notionApi": {
+          "id": "SELECIONE_CREDENCIAL_NOTION",
+          "name": "Notion (selecionar)"
+        }
+      },
+      "onError": "continueRegularOutput"
     }
   ],
   "connections": {
@@ -179,6 +242,35 @@
       ]
     },
     "Create Page": {
+      "main": [
+        [
+          {
+            "node": "Tem responsável?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tem responsável?": {
+      "main": [
+        [
+          {
+            "node": "Set Responsável (Notion)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Responsável (Notion)": {
       "main": [
         [
           {

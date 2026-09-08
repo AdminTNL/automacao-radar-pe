@@ -249,6 +249,11 @@ export default function AudiosTab({ instances, offline }: AudiosTabProps) {
         </button>
       </div>
 
+      <div className="panel-note">
+        Áudios que entram pra campanha quando o operador responde com o emoji de gatilho.
+        Acompanhe aqui se foram salvos no Drive e reenvie os que deram erro.
+      </div>
+
       {error && <div className="error">Erro: {error}</div>}
       {loading && <div className="state">Carregando…</div>}
 

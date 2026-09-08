@@ -5,6 +5,8 @@ interface Env {
   AUTH_SECRET: string
   N8N_NOTION_WEBHOOK_URL: string
   N8N_NOTION_WEBHOOK_SECRET: string
+  N8N_NOTION_LIST_WEBHOOK_URL: string
+  N8N_NOTION_USERS_WEBHOOK_URL: string
   N8N_AUDIO_RESEND_WEBHOOK_URL: string
   N8N_AUDIO_RESEND_WEBHOOK_SECRET: string
   ASSETS: Fetcher
@@ -144,6 +146,31 @@ async function proxySupabase(request: Request, env: Env): Promise<Response> {
   return res
 }
 
+// Resolve o responsável pelo contato (nome) pro id do usuário no Notion
+// (radar_pe_responsaveis.notion_user_id). Se o responsável não tiver vínculo
+// com o workspace do Notion, devolve '' e o fluxo 07 cria a página sem
+// preencher a propriedade "people" (em vez de quebrar).
+async function lookupNotionUserId(name: unknown, env: Env): Promise<string> {
+  if (typeof name !== 'string' || !name.trim()) return ''
+  const url = new URL(`${env.SUPABASE_URL}/rest/v1/radar_pe_responsaveis`)
+  url.searchParams.set('select', 'notion_user_id')
+  url.searchParams.set('name', `eq.${name.trim()}`)
+  const headers = new Headers({
+    apikey: env.SUPABASE_SERVICE_ROLE_KEY,
+    authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+    accept: 'application/json',
+  })
+  try {
+    const res = await fetch(url.toString(), { headers })
+    if (!res.ok) return ''
+    const rows = (await res.json()) as { notion_user_id?: string | null }[]
+    const id = rows[0]?.notion_user_id
+    return id && id.trim() ? id.trim() : ''
+  } catch {
+    return ''
+  }
+}
+
 async function handleNotionCreatePage(request: Request, env: Env): Promise<Response> {
   let body: Record<string, unknown>
   try {
@@ -151,6 +178,11 @@ async function handleNotionCreatePage(request: Request, env: Env): Promise<Respo
   } catch {
     return json({ error: 'invalid request' }, 400)
   }
+
+  // Se o responsável tem id de usuário do Notion cadastrado, injeta pra o n8n
+  // preencher a propriedade "people" (senão a página nasce sem responsável).
+  const notionUserId = await lookupNotionUserId(body.responsavel, env)
+  if (notionUserId) body.responsavel_notion_id = notionUserId
 
   // O Worker só repassa o form pro n8n (que detém a credencial do Notion).
   // A autenticação do usuário já foi feita acima (cookie); o secret protege o
@@ -180,6 +212,71 @@ async function handleNotionCreatePage(request: Request, env: Env): Promise<Respo
     return json({ error: data.message ?? data.error ?? 'Falha ao criar página no Notion' }, res.status)
   }
   return json({ page_id: data.page_id ?? '', url: data.url ?? '' })
+}
+
+async function handleNotionListPages(request: Request, env: Env): Promise<Response> {
+  if (!env.N8N_NOTION_LIST_WEBHOOK_URL) {
+    return json({ error: 'Listagem do Radar não configurada (N8N_NOTION_LIST_WEBHOOK_URL).' }, 500)
+  }
+
+  // O Worker só repassa pro webhook do n8n (fluxo 11 - Notion List Pages), que
+  // consulta o database "Radar Mobiliza PE" usando a credencial do Notion e
+  // devolve as páginas normalizadas.
+  let res: Response
+  try {
+    res = await fetch(env.N8N_NOTION_LIST_WEBHOOK_URL, {
+      method: 'GET',
+      headers: {
+        'x-radar-secret': env.N8N_NOTION_WEBHOOK_SECRET,
+      },
+    })
+  } catch {
+    return json({ error: 'Falha ao chamar o n8n' }, 502)
+  }
+
+  let data: { rows?: unknown; error?: string; message?: string } = {}
+  try {
+    data = (await res.json()) as typeof data
+  } catch {
+    data = {}
+  }
+
+  if (!res.ok) {
+    return json({ error: data.message ?? data.error ?? 'Falha ao listar o Radar no Notion' }, res.status)
+  }
+  return json({ rows: Array.isArray(data.rows) ? data.rows : [] })
+}
+
+async function handleNotionListUsers(request: Request, env: Env): Promise<Response> {
+  if (!env.N8N_NOTION_USERS_WEBHOOK_URL) {
+    return json({ error: 'Lista de usuários não configurada (N8N_NOTION_USERS_WEBHOOK_URL).' }, 500)
+  }
+
+  // O Worker só repassa pro webhook do n8n (fluxo 12 - Notion List Users), que
+  // lista os usuários do workspace do Notion com a credencial do Notion.
+  let res: Response
+  try {
+    res = await fetch(env.N8N_NOTION_USERS_WEBHOOK_URL, {
+      method: 'GET',
+      headers: {
+        'x-radar-secret': env.N8N_NOTION_WEBHOOK_SECRET,
+      },
+    })
+  } catch {
+    return json({ error: 'Falha ao chamar o n8n' }, 502)
+  }
+
+  let data: { rows?: unknown; error?: string; message?: string } = {}
+  try {
+    data = (await res.json()) as typeof data
+  } catch {
+    data = {}
+  }
+
+  if (!res.ok) {
+    return json({ error: data.message ?? data.error ?? 'Falha ao listar usuários do Notion' }, res.status)
+  }
+  return json({ rows: Array.isArray(data.rows) ? data.rows : [] })
 }
 
 async function handleAudioResend(request: Request, env: Env): Promise<Response> {
@@ -243,6 +340,16 @@ export default {
     if (url.pathname === '/api/notion/pages' && request.method === 'POST') {
       if (!(await isAuthed(request, env))) return json({ error: 'unauthorized' }, 401)
       return handleNotionCreatePage(request, env)
+    }
+
+    if (url.pathname === '/api/notion/query' && request.method === 'GET') {
+      if (!(await isAuthed(request, env))) return json({ error: 'unauthorized' }, 401)
+      return handleNotionListPages(request, env)
+    }
+
+    if (url.pathname === '/api/notion/users' && request.method === 'GET') {
+      if (!(await isAuthed(request, env))) return json({ error: 'unauthorized' }, 401)
+      return handleNotionListUsers(request, env)
     }
 
     if (url.pathname === '/api/audio/resend' && request.method === 'POST') {
