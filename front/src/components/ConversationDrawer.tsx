@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Contact, Message } from '../types'
+import EncaminhamentoSelect from './EncaminhamentoSelect'
 
 interface ParsedMessage {
   from: 'me' | 'contact'
@@ -77,6 +78,7 @@ interface ConversationDrawerProps {
   messages: Message[] | null
   loading: boolean
   error: string | null
+  onChangeEncaminhamento: (value: string) => Promise<void>
   onClose: () => void
 }
 
@@ -87,6 +89,7 @@ export default function ConversationDrawer({
   messages,
   loading,
   error,
+  onChangeEncaminhamento,
   onClose,
 }: ConversationDrawerProps) {
   useEffect(() => {
@@ -164,6 +167,15 @@ export default function ConversationDrawer({
               {contact.remote_jid && <span className="muted"> · {contact.remote_jid}</span>}
               {contact.instance_name && <span className="muted"> · {contact.instance_name}</span>}
               {category && category !== '—' && <span className="muted"> · {category}</span>}
+            </div>
+            <div className="drawer-meta">
+              <label className="drawer-meta-field">
+                <span className="drawer-meta-label">Encaminhamento</span>
+                <EncaminhamentoSelect
+                  value={contact.encaminhamento}
+                  onChange={(v) => void onChangeEncaminhamento(v).catch(() => {})}
+                />
+              </label>
             </div>
           </div>
           <button type="button" className="drawer-close" onClick={onClose} aria-label="Fechar">
