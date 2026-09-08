@@ -883,6 +883,16 @@ tbody tr:hover {
   line-height: 1.5;
 }
 
+.radar-outros {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-muted);
+}
+
+.radar-outros .radar-fields {
+  margin-top: 8px;
+}
+
 .drawer-meta {
   display: flex;
   gap: 16px;

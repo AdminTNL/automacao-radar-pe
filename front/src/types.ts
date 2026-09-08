@@ -140,4 +140,6 @@ export interface NotionRadarRow {
   fonte: string
   cidade: string
   sessao_responsavel: string
+  devolutiva: string
+  outros?: { key: string; value: string }[]
 }

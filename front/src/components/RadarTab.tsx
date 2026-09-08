@@ -306,7 +306,7 @@ function RadarRowDrawer({ row, closing, onClose }: RadarRowDrawerProps) {
             ))}
           </div>
 
-          {(row.o_que_disse || row.o_que_fizemos) && (
+          {(row.o_que_disse || row.o_que_fizemos || row.devolutiva) && (
             <div className="radar-texts">
               {row.o_que_disse && (
                 <div className="radar-text">
@@ -320,6 +320,26 @@ function RadarRowDrawer({ row, closing, onClose }: RadarRowDrawerProps) {
                   <div className="radar-text-body">{row.o_que_fizemos}</div>
                 </div>
               )}
+              {row.devolutiva && (
+                <div className="radar-text">
+                  <div className="radar-text-label">Devolutiva da campanha</div>
+                  <div className="radar-text-body">{row.devolutiva}</div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {row.outros && row.outros.length > 0 && (
+            <div className="radar-outros">
+              <div className="radar-text-label">Outros campos</div>
+              <div className="radar-fields">
+                {row.outros.map((o) => (
+                  <div key={o.key} className="radar-field">
+                    <span className="radar-field-label">{o.key}</span>
+                    <span className="radar-field-value">{o.value || '—'}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>
