@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { MUNICIPIOS_PE } from '../lib/municipios'
+import { CIDADES_RADAR, cidadePorId } from '../lib/cidadesRadar'
 import { useClosing } from '../lib/useClosing'
 import type { Case, EncaminhamentoForm, Responsavel } from '../types'
 
@@ -68,8 +68,10 @@ export default function EncaminhamentoForm({
     urgencia: '',
     o_que_fizemos: '',
     status: 'Novo',
-    fonte: '',
+    fonte: 'Comunidade regional',
     cidade: '',
+    cidade_page_id: '',
+    macrorregiao: '',
     sessao: cas.instance_name ?? '',
   }))
   const [saving, setSaving] = useState(false)
@@ -82,6 +84,16 @@ export default function EncaminhamentoForm({
 
   const setField = (key: keyof EncaminhamentoForm, value: string) =>
     setForm((prev) => ({ ...prev, [key]: value }))
+
+  const setCidade = (pageId: string) => {
+    const item = cidadePorId(pageId)
+    setForm((prev) => ({
+      ...prev,
+      cidade_page_id: pageId,
+      cidade: item ? item.nome : '',
+      macrorregiao: item ? item.macrorregiao : '',
+    }))
+  }
 
   const submit = async () => {
     if (saving) return
@@ -278,14 +290,28 @@ export default function EncaminhamentoForm({
 
           <label className="modal-field">
             <span>Cidade</span>
-            <select value={form.cidade} onChange={(e) => setField('cidade', e.target.value)}>
+            <select value={form.cidade_page_id} onChange={(e) => setCidade(e.target.value)}>
               <option value="">—</option>
-              {MUNICIPIOS_PE.map((m) => (
-                <option key={m} value={m}>
-                  {m}
+              {CIDADES_RADAR.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.nome}
                 </option>
               ))}
             </select>
+          </label>
+
+          <label className="modal-field">
+            <span>Macrorregião</span>
+            <input
+              className="search"
+              type="text"
+              value={form.macrorregiao}
+              readOnly
+              placeholder={form.cidade_page_id ? '' : 'Selecione a cidade'}
+            />
+            <span className="modal-hint">
+              Preenchida automaticamente pela cidade escolhida (e no Notion via rollup).
+            </span>
           </label>
 
           {error && <div className="error">Erro: {error}</div>}

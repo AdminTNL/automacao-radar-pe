@@ -207,19 +207,25 @@ A criação da página no Notion é feita pelo **n8n** (que já tem a credencial
 | O que a gente fez | Text |
 | Status | Status (ou Select) |
 | Fonte | Select |
-| Cidade | Select |
+| Cidade | Relation (página do município na database "Cidade x Macrorregião") |
+| Macrorregião | Rollup automático sobre a relation "Cidade" (não é enviado) |
 | Sessão responsável pelo contato | Text |
 
-> As opções dos selects (Área, Urgência, Fonte, Cidade, Status) são livres — o form do front já envia os valores corretos; o Notion cria as opções automaticamente na primeira página.
+> As opções dos selects (Área, Urgência, Fonte, Status) são livres — o form do front já envia os valores corretos; o Notion cria as opções automaticamente na primeira página.
 >
-> **Atenção:** a criação/edição de propriedades no database do Notion é **manual** (time). O campo "Sessão responsável pelo contato" só deve ser enviado depois que a propriedade existir no Notion — até lá, o `07` ignora o campo sem quebrar. O JSON `07_notion_create_page.json` deste repo pode estar defasado em relação ao workflow vivo no editor (mantido manualmente); **a referência é o workflow vivo**. O campo novo (`sessao`) foi adicionado tanto ao Auth+Normalize quanto ao Create Page — confira/sincronize no editor.
+> **Cidade é Relation.** O form envia `cidade_page_id` (o id da página do município); o node "Create Page" do `07` grava a relation. A lista de municípios do select do front vem do snapshot estático em `front/src/lib/cidadesRadar.ts` (páginas da database "Cidade x Macrorregião"), que inclui nome + page id + Macrorregião. O campo "Fonte" já vem com **"Comunidade regional"** selecionado por padrão (mas é alterável).
+>
+> **Macrorregião é um Rollup** (`show_original`) sobre a relation "Cidade" no Notion — preenche sozinha quando a Cidade é definida. O front apenas exibe a Macrorregião da cidade escolhida (somente leitura); o payload não envia esse campo pro Notion.
+>
+> **Atenção:** a criação/edição de propriedades no database do Notion é **manual** (time). O campo "Sessão responsável pelo contato" só deve ser enviado depois que a propriedade existir no Notion — até lá, o `07` ignora o campo sem quebrar. O JSON `07_notion_create_page.json` deste repo pode estar defasado em relação ao workflow vivo no editor (mantido manualmente); **a referência é o workflow vivo**. O fluxo do `07` hoje monta o body cru da API do Notion (`POST /v1/pages`) num node Code e envia via HTTP Request com a credencial Notion — ajuste o mapeamento em **"Montar Payload Notion"** e/ou no **"Auth + Normalize"** se os nomes divergirem.
 
 Passos no n8n:
 
 1. Importar o `07_notion_create_page.json`.
-2. No node **Create Page**: selecionar a **credencial do Notion** já existente e o **database** "Radar Mobiliza PE" (substituir o placeholder `SELECIONE_DATABASE_NOTION`).
-3. No node **Auth + Normalize**: trocar `TROQUE_PELO_SEGREDO` por um segredo forte (ex.: `openssl rand -hex 32`) — e usar o **mesmo valor** no `N8N_NOTION_WEBHOOK_SECRET` do Worker.
-4. Ativar o workflow e copiar a **URL do webhook** (Production) pro `N8N_NOTION_WEBHOOK_URL` do Worker.
+2. No node **Montar Payload Notion**: substituir `SELECIONE_DATABASE_NOTION` pelo id do database "Radar Mobiliza PE" (ex.: `5c501c99-7054-44a8-84b9-e4cfb4dbc1b8`).
+3. No node **Criar Página no Notion**: selecionar a **credencial do Notion** já existente (placeholder `SELECIONE_CREDENCIAL_NOTION`).
+4. No node **Auth + Normalize**: trocar `TROQUE_PELO_SEGREDO` por um segredo forte (ex.: `openssl rand -hex 32`) — e usar o **mesmo valor** no `N8N_NOTION_WEBHOOK_SECRET` do Worker.
+5. Ativar o workflow e copiar a **URL do webhook** (Production) pro `N8N_NOTION_WEBHOOK_URL` do Worker.
 
 ### Setup do espelho (11 - Notion List Pages)
 

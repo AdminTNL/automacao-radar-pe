@@ -9,105 +9,68 @@
         "options": {}
       },
       "type": "n8n-nodes-base.webhook",
-      "typeVersion": 2,
       "position": [
-        -32,
-        -112
+        0,
+        0
       ],
-      "id": "55938b19-049d-4aa5-8968-c62270a7bfc9",
-      "name": "Webhook"
+      "id": "fe747f4c-a6e1-480c-b0bf-49d0d4d3e610",
+      "name": "Webhook",
+      "typeVersion": 2
     },
     {
       "parameters": {
-        "jsCode": "// Segredo compartilhado com o Worker do Cloudflare (env N8N_NOTION_WEBHOOK_SECRET).\n// Troque 'TROQUE_PELO_SEGREDO' pelo mesmo valor configurado no Worker.\nconst SECRET = 'TROQUE_PELO_SEGREDO';\n\nconst item = $input.first().json || {};\nconst headers = item.headers || {};\n\nconst headerName = Object.keys(headers).find((k) => k.toLowerCase() === 'x-radar-secret');\nif (!headerName || headers[headerName] !== SECRET) {\n  throw new Error('x-radar-secret invalido ou ausente');\n}\n\nconst b = item.body || item;\n\nreturn [{\n  json: {\n    titulo: (b.titulo && String(b.titulo).trim()) || 'Sem título',\n    o_que_disse: b.o_que_disse ?? '',\n    area: b.area ?? '',\n    precisa_retorno: b.precisa_retorno ?? '',\n    responsavel: b.responsavel ?? '',\n    pessoa: b.pessoa ?? '',\n    telefone: b.telefone ?? '',\n    data: b.data ?? '',\n    urgencia: b.urgencia ?? '',\n    o_que_fizemos: b.o_que_fizemos ?? '',\n    status: b.status ?? '',\n    fonte: b.fonte ?? '',\n    cidade: b.cidade ?? '',\n    sessao: b.sessao ?? '',\n    responsavel_notion_id: (b.responsavel_notion_id && String(b.responsavel_notion_id).trim()) || '',\n  },\n}];"
+        "jsCode": "// Segredo compartilhado com o Worker do Cloudflare (env N8N_NOTION_WEBHOOK_SECRET).\n// Troque 'TROQUE_PELO_SEGREDO' pelo mesmo valor configurado no Worker.\nconst SECRET = 'TROQUE_PELO_SEGREDO';\n\nconst item = $input.first().json || {};\nconst headers = item.headers || {};\n\nconst headerName = Object.keys(headers).find((k) => k.toLowerCase() === 'x-radar-secret');\nif (!headerName || headers[headerName] !== SECRET) {\n  throw new Error('x-radar-secret invalido ou ausente');\n}\n\nconst b = item.body || item;\n\nreturn [{\n  json: {\n    titulo: (b.titulo && String(b.titulo).trim()) || 'Sem título',\n    o_que_disse: b.o_que_disse ?? '',\n    area: b.area ?? '',\n    precisa_retorno: b.precisa_retorno ?? '',\n    responsavel: b.responsavel ?? '',\n    pessoa: b.pessoa ?? '',\n    telefone: b.telefone ?? '',\n    data: b.data ?? '',\n    urgencia: b.urgencia ?? '',\n    o_que_fizemos: b.o_que_fizemos ?? '',\n    status: b.status ?? '',\n    fonte: b.fonte ?? '',\n    cidade: b.cidade ?? '',\n    cidade_page_id: (b.cidade_page_id && String(b.cidade_page_id).trim()) || '',\n    sessao: b.sessao ?? '',\n    responsavel_notion_id: (b.responsavel_notion_id && String(b.responsavel_notion_id).trim()) || '',\n  },\n}];"
       },
       "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
       "position": [
-        192,
-        -112
+        0,
+        0
       ],
-      "id": "1c9824e2-339f-4a22-98f1-bf1d6202d904",
-      "name": "Auth + Normalize"
+      "id": "af3f4d0e-537c-4f4d-b761-c9e5f8a979e9",
+      "name": "Auth + Normalize",
+      "typeVersion": 2
     },
     {
       "parameters": {
-        "resource": "databasePage",
-        "databaseId": {
-          "__rl": true,
-          "value": "SELECIONE_DATABASE_NOTION",
-          "mode": "id"
-        },
-        "title": "={{ $json.titulo }}",
-        "propertiesUi": {
-          "propertyValues": [
-            {
-              "key": "O que a pessoa disse|rich_text",
-              "type": "rich_text",
-              "textContent": "={{ $json.o_que_disse }}"
-            },
-            {
-              "key": "Área|select",
-              "type": "select",
-              "selectValue": "={{ $json.area }}"
-            },
-            {
-              "key": "Precisa de retorno|select",
-              "type": "select",
-              "selectValue": "={{ $json.precisa_retorno }}"
-            },
-            {
-              "key": "Pessoa|rich_text",
-              "type": "rich_text",
-              "textContent": "={{ $json.pessoa }}"
-            },
-            {
-              "key": "Telefone|phone_number",
-              "type": "phone_number",
-              "phoneValue": "={{ $json.telefone }}"
-            },
-            {
-              "key": "Data|date",
-              "type": "date",
-              "includeTime": false,
-              "date": "={{ $json.data }}"
-            },
-            {
-              "key": "Urgência|select",
-              "type": "select",
-              "selectValue": "={{ $json.urgencia }}"
-            },
-            {
-              "key": "O que a gente fez|rich_text",
-              "type": "rich_text",
-              "textContent": "={{ $json.o_que_fizemos }}"
-            },
-            {
-              "key": "Status|select",
-              "type": "status",
-              "statusValue": "={{ $json.status }}"
-            },
-            {
-              "key": "Fonte|select",
-              "type": "select",
-              "selectValue": "={{ $json.fonte }}"
-            },
-            {
-              "key": "Sessão responsável pelo contato|rich_text",
-              "textContent": "={{ $json.sessao }}"
-            }
-          ]
-        },
-        "options": {}
+        "jsCode": "// Monta o body cru da API do Notion (POST /v1/pages) a partir do form normalizado.\n// A relation \"Cidade\" recebe o page id do município na database \"Cidade x Macrorregião\"\n// (3a7b2502-d314-800e-94bf-ff26770e5945); a property \"Macrorregião\" do Radar é um ROLLUP\n// sobre essa relation e preenche sozinha — por isso NÃO é enviada aqui.\n// \"Responsável pelo contato\" (people) é setado aqui mesmo quando o id existe.\n\nconst DATABASE_ID = 'SELECIONE_DATABASE_NOTION';\nconst p = $json;\nconst props = {};\n\nprops['O que chegou'] = { title: [{ text: { content: p.titulo } }] };\n\nif (p.o_que_disse) props['O que a pessoa disse'] = { rich_text: [{ text: { content: p.o_que_disse } }] };\nif (p.area) props['Área'] = { select: { name: p.area } };\nif (p.precisa_retorno) props['Precisa de retorno'] = { select: { name: p.precisa_retorno } };\nif (p.pessoa) props['Pessoa'] = { rich_text: [{ text: { content: p.pessoa } }] };\nif (p.telefone) props['Telefone'] = { phone_number: p.telefone };\nif (p.data) props['Data'] = { date: { start: p.data } };\nif (p.urgencia) props['Urgência'] = { select: { name: p.urgencia } };\nif (p.o_que_fizemos) props['O que a gente fez'] = { rich_text: [{ text: { content: p.o_que_fizemos } }] };\nif (p.status) props['Status'] = { select: { name: p.status } };\nif (p.fonte) props['Fonte'] = { select: { name: p.fonte } };\nif (p.sessao) props['Sessão responsável pelo contato'] = { rich_text: [{ text: { content: p.sessao } }] };\nif (p.cidade_page_id) props['Cidade'] = { relation: [{ id: p.cidade_page_id }] };\nif (p.responsavel_notion_id) props['Responsável pelo contato'] = { people: [{ id: p.responsavel_notion_id }] };\n\nreturn [{\n  json: {\n    parent: { database_id: DATABASE_ID },\n    properties: props,\n  },\n}];"
       },
-      "type": "n8n-nodes-base.notion",
-      "typeVersion": 2.2,
+      "type": "n8n-nodes-base.code",
       "position": [
-        416,
-        -112
+        0,
+        0
       ],
-      "id": "df8f61d4-8fb5-4f22-9465-b79603ae85d8",
-      "name": "Create Page",
+      "id": "96679e36-b5cb-4275-aa37-7d03ab538e2c",
+      "name": "Montar Payload Notion",
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/pages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "notionApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Notion-Version",
+                "value": "2022-06-28"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        0,
+        0
+      ],
+      "id": "d84d4d97-6e06-4bd9-b16c-f6d67f1d1e2d",
+      "name": "Criar Página no Notion",
+      "typeVersion": 4.3,
       "credentials": {
         "notionApi": {
           "id": "SELECIONE_CREDENCIAL_NOTION",
@@ -119,103 +82,16 @@
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify({ page_id: $json.id, url: $json.url }) }}",
-        "options": {
-          "responseHeaders": {
-            "entries": [
-              {
-                "name": "Content-Type",
-                "value": "application/json"
-              }
-            ]
-          }
-        }
-      },
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.2,
-      "position": [
-        640,
-        -112
-      ],
-      "id": "f1534ccf-bb5c-46d9-9585-613d8987a6a9",
-      "name": "Respond"
-    },
-    {
-      "parameters": {
-        "rules": {
-          "values": [
-            {
-              "conditions": {
-                "options": {
-                  "caseSensitive": true,
-                  "leftValue": "",
-                  "typeValidation": "strict",
-                  "version": 2
-                },
-                "conditions": [
-                  {
-                    "id": "fb3557ba363749799e317cdc51e4b9ae",
-                    "leftValue": "={{ $json.responsavel_notion_id }}",
-                    "rightValue": "",
-                    "operator": {
-                      "type": "string",
-                      "operation": "notEquals"
-                    }
-                  }
-                ],
-                "combinator": "and"
-              }
-            }
-          ]
-        },
-        "options": {
-          "fallbackOutput": "extra"
-        }
-      },
-      "type": "n8n-nodes-base.switch",
-      "typeVersion": 3.2,
-      "position": [
-        656,
-        -112
-      ],
-      "id": "0e777424934f4f8a991a0bd6af68ab91",
-      "name": "Tem responsável?"
-    },
-    {
-      "parameters": {
-        "resource": "databasePage",
-        "operation": "update",
-        "pageId": {
-          "__rl": true,
-          "value": "={{ $json.id }}",
-          "mode": "id"
-        },
-        "simple": false,
-        "propertiesUi": {
-          "propertyValues": [
-            {
-              "key": "Responsável pelo contato|people",
-              "type": "people",
-              "peopleValue": "={{ $json.responsavel_notion_id }}"
-            }
-          ]
-        },
         "options": {}
       },
-      "type": "n8n-nodes-base.notion",
-      "typeVersion": 2.2,
+      "type": "n8n-nodes-base.respondToWebhook",
       "position": [
-        896,
-        -180
+        0,
+        0
       ],
-      "id": "2347cef142c348babd0467ced2b1e67f",
-      "name": "Set Responsável (Notion)",
-      "credentials": {
-        "notionApi": {
-          "id": "SELECIONE_CREDENCIAL_NOTION",
-          "name": "Notion (selecionar)"
-        }
-      },
-      "onError": "continueRegularOutput"
+      "id": "b2a0e951-2eac-40c7-ba73-010180fdc521",
+      "name": "Respond",
+      "typeVersion": 1.5
     }
   ],
   "connections": {
@@ -234,43 +110,25 @@
       "main": [
         [
           {
-            "node": "Create Page",
+            "node": "Montar Payload Notion",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Create Page": {
+    "Montar Payload Notion": {
       "main": [
         [
           {
-            "node": "Tem responsável?",
+            "node": "Criar Página no Notion",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Tem responsável?": {
-      "main": [
-        [
-          {
-            "node": "Set Responsável (Notion)",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Respond",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Set Responsável (Notion)": {
+    "Criar Página no Notion": {
       "main": [
         [
           {

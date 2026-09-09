@@ -61,6 +61,8 @@ export interface EncaminhamentoForm {
   status: string
   fonte: string
   cidade: string
+  cidade_page_id: string
+  macrorregiao: string
   sessao: string
 }
 
