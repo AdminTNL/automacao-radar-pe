@@ -9,8 +9,10 @@ import EditableText from './EditableText'
 import EncaminhamentoSelect from './EncaminhamentoSelect'
 import { ENCAMINHAMENTO_OPTIONS } from '../lib/crmOptions'
 import PeriodPicker, { type Period } from './PeriodPicker'
+import { downloadCsv, toCsv } from '../lib/csv'
 
 const PAGE_SIZE = 500
+const EXPORT_MAX_ROWS = 50000
 
 function localDateStr(d: Date): string {
   const month = String(d.getMonth() + 1).padStart(2, '0')
@@ -63,6 +65,7 @@ export default function ContactsTab({ instances, offline }: ContactsTabProps) {
   const [fromDate, setFromDate] = useState(() => localDateStr(weekStartLocal()))
   const [toDate, setToDate] = useState(() => todayDateStr())
   const [hasMore, setHasMore] = useState(false)
+  const [exporting, setExporting] = useState(false)
   const [activeContact, setActiveContact] = useState<Contact | null>(null)
   const [transcript, setTranscript] = useState<string | null>(null)
   const [messages, setMessages] = useState<Message[] | null>(null)
@@ -189,21 +192,24 @@ export default function ContactsTab({ instances, offline }: ContactsTabProps) {
     }
   }
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    return contacts.filter((c) => {
+  const matchesFilters = useCallback(
+    (c: Contact) => {
       if (session && c.instance_name !== session) return false
       if (category && categoryByInstance.get(c.instance_name ?? '') !== category) return false
       if (responsavel && (c.responsavel ?? responsavelByInstance.get(c.instance_name ?? '') ?? '') !== responsavel) return false
       if (encaminhamentoFilter === 'none' && (c.encaminhamento ?? '').trim() !== '') return false
       if (encaminhamentoFilter && encaminhamentoFilter !== 'none' && c.encaminhamento !== encaminhamentoFilter) return false
+      const q = search.trim().toLowerCase()
       if (!q) return true
       return (
         (c.contact_name ?? '').toLowerCase().includes(q) ||
         (c.phone ?? '').toLowerCase().includes(q)
       )
-    })
-  }, [contacts, search, category, session, responsavel, encaminhamentoFilter, categoryByInstance, responsavelByInstance])
+    },
+    [session, category, responsavel, encaminhamentoFilter, search, categoryByInstance, responsavelByInstance],
+  )
+
+  const filtered = useMemo(() => contacts.filter(matchesFilters), [contacts, matchesFilters])
 
   const saveField = async (id: string, field: 'contact_name' | 'phone', value: string) => {
     const payload = field === 'contact_name' ? { contact_name: value || null } : { phone: value || null }
@@ -247,9 +253,47 @@ export default function ContactsTab({ instances, offline }: ContactsTabProps) {
 
   const closeConversation = () => setActiveContact(null)
 
+  const exportFileName = useCallback((): string => {
+    const today = todayDateStr()
+    if (period === 'completo') return `contatos-radar-pe-completo-${today}.csv`
+    const de = period === 'semana' ? localDateStr(weekStartLocal()) : fromDate || 'inicio'
+    const ate = period === 'semana' ? today : toDate || today
+    return `contatos-radar-pe-${de}_a_${ate}.csv`
+  }, [period, fromDate, toDate])
+
+  // Baixa a lista filtrada inteira (não só as páginas já carregadas), com todas
+  // as colunas do registro. O período é aplicado na consulta; os demais filtros,
+  // iguais aos da tela, são aplicados em memória.
+  const exportCsv = async () => {
+    if (exporting) return
+    setExporting(true)
+    setError(null)
+    try {
+      const rows: Contact[] = []
+      let offset = 0
+      for (;;) {
+        const { data, error: exportError } = await baseQuery()
+          .order('last_message_at', { ascending: false, nullsFirst: false })
+          .range(offset, offset + PAGE_SIZE - 1)
+        if (exportError) {
+          if (!isOfflineError(exportError)) setError(exportError.message)
+          return
+        }
+        const page = (data ?? []) as Contact[]
+        rows.push(...page)
+        if (page.length < PAGE_SIZE) break
+        offset += PAGE_SIZE
+        if (rows.length >= EXPORT_MAX_ROWS) break
+      }
+      downloadCsv(exportFileName(), toCsv(rows.filter(matchesFilters)))
+    } finally {
+      setExporting(false)
+    }
+  }
+
   return (
     <>
-      <div className="filters">
+      <div className="filters filters-contatos">
         <input
           className="search"
           type="text"
@@ -293,16 +337,51 @@ export default function ContactsTab({ instances, offline }: ContactsTabProps) {
             </option>
           ))}
         </select>
-        <PeriodPicker
-          value={{ period, start: fromDate || null, end: toDate || null }}
-          onChange={(v) => {
-            setPeriod(v.period)
-            if (v.period === 'custom') {
-              setFromDate(v.start ?? '')
-              setToDate(v.end ?? '')
+        <div className="period-group">
+          <PeriodPicker
+            value={{ period, start: fromDate || null, end: toDate || null }}
+            onChange={(v) => {
+              setPeriod(v.period)
+              if (v.period === 'custom') {
+                setFromDate(v.start ?? '')
+                setToDate(v.end ?? '')
+              }
+            }}
+          />
+          <button
+            type="button"
+            className="period-action"
+            onClick={() => void exportCsv()}
+            disabled={exporting || loading}
+            aria-busy={exporting}
+            aria-label="Baixar CSV"
+            title={
+              exporting
+                ? 'Gerando CSV…'
+                : 'Baixar a lista filtrada em CSV, com todas as colunas'
             }
-          }}
-        />
+          >
+            {exporting ? (
+              <span className="period-action-spin" aria-hidden="true" />
+            ) : (
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+            )}
+          </button>
+        </div>
       </div>
 
       <div className="panel-note">

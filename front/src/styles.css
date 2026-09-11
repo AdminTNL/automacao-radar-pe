@@ -459,6 +459,11 @@ body {
   color: var(--muted);
 }
 
+.filters-contatos .search {
+  flex: 1 1 160px;
+  min-width: 120px;
+}
+
 .search:focus {
   border-color: var(--accent-strong);
   box-shadow: 0 0 0 3px var(--accent-subtle);
@@ -492,6 +497,56 @@ select {
 .refresh:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.period-group {
+  display: inline-flex;
+  align-items: stretch;
+}
+
+.period-group .period-trigger {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.period-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left: 0;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  color: var(--text-bright);
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 0.12s ease, color 0.12s ease;
+}
+
+.period-action:hover:not(:disabled) {
+  border-color: var(--accent-strong);
+  color: var(--accent-strong);
+}
+
+.period-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.period-action-spin {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border);
+  border-top-color: var(--text-bright);
+  border-radius: 50%;
+  animation: period-spin 0.7s linear infinite;
+}
+
+@keyframes period-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .success {
