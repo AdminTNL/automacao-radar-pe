@@ -6,8 +6,8 @@
         "rule": {
           "interval": [
             {
-              "field": "cronExpression",
-              "expression": "0 9 * * *"
+              "field": "minutes",
+              "minutesInterval": 5
             }
           ]
         }
@@ -15,10 +15,10 @@
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.1,
       "position": [
-        0,
-        0
+        -368,
+        144
       ],
-      "id": "2c3ffe72-a4b1-5e52-a026-10e378217d5c",
+      "id": "07a2de0a-c17a-4ae4-bbe8-b802bcb3150a",
       "name": "Schedule Trigger"
     },
     {
@@ -41,10 +41,10 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        220,
-        0
+        -144,
+        144
       ],
-      "id": "1f192efd-23a3-5bc9-9091-2b7095029e68",
+      "id": "3389b39e-814d-4251-8136-d5d26557deab",
       "name": "Get Instances",
       "credentials": {
         "supabaseApi": {
@@ -60,38 +60,15 @@
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        440,
-        0
+        80,
+        144
       ],
-      "id": "4eaf374d-e75e-5b81-9072-9c79fef5532c",
+      "id": "dc83ad16-c168-483d-bb1c-909f458c5975",
       "name": "Loop Instances"
     },
     {
       "parameters": {
-        "assignments": {
-          "assignments": [
-            {
-              "id": "e86213c4-f26d-5289-b569-12e02dcc6539",
-              "name": "name",
-              "value": "={{ $json.name }}",
-              "type": "string"
-            }
-          ]
-        },
-        "options": {}
-      },
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
-      "position": [
-        660,
-        0
-      ],
-      "id": "0c7e99d4-4dea-5da7-8b67-77c6c6e6fa4d",
-      "name": "Set Instance"
-    },
-    {
-      "parameters": {
-        "url": "=https://evolution.tnledu.shop/instance/connectionState/{{ encodeURIComponent($json.name) }}",
+        "url": "=https://evolution.tnledu.shop/instance/connectionState/{{ encodeURIComponent($('Loop Instances').item.json.name) }}",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "evolutionApi",
         "options": {}
@@ -99,29 +76,30 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        880,
-        0
+        304,
+        160
       ],
-      "id": "15eb64fc-a4ef-50ca-869a-f1eb78ae7aea",
+      "id": "c676ee77-f4e8-4447-87ce-78dfd16f8800",
       "name": "Connection State",
       "credentials": {
         "evolutionApi": {
           "id": "QgTe0fvaWVxshbUk",
           "name": "Admin acesso geral"
         }
-      }
+      },
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "const j = $input.first().json || {};\nconst state =\n  j.state ||\n  (j.instance && j.instance.state) ||\n  (j.instance && j.instance.connectionStatus && j.instance.connectionStatus.state) ||\n  'unknown';\nreturn [{ json: { name: $('Set Instance').first().json.name, state } }];"
+        "jsCode": "const j = $input.first().json || {};\nconst name = $('Loop Instances').item.json.name;\nconst state = j.error\n  ? 'close'\n  : j.state ||\n    (j.instance && j.instance.state) ||\n    (j.instance && j.instance.connectionStatus && j.instance.connectionStatus.state) ||\n    'unknown';\nreturn [{ json: { name, state } }];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1100,
-        0
+        512,
+        160
       ],
-      "id": "5bc2393e-9bae-5a84-bac9-c9ecc56cb0df",
+      "id": "ea1885ed-4fc8-417c-8c6a-4cd750142248",
       "name": "Extract State"
     },
     {
@@ -139,24 +117,18 @@
             }
           ]
         },
-        "options": {
-          "response": {
-            "response": {
-              "responseFormat": "text"
-            }
-          }
-        },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ p_name: $json.name, p_connection_state: $json.state }) }}"
+        "jsonBody": "={{ JSON.stringify({ p_name: $json.name, p_connection_state: $json.state }) }}",
+        "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        1320,
-        0
+        736,
+        160
       ],
-      "id": "2fb00a19-67ec-5c3d-8fba-1ce688ea0624",
+      "id": "be47f41b-86d3-41da-afc9-20bbca660628",
       "name": "Mark Health",
       "credentials": {
         "supabaseApi": {
@@ -192,17 +164,6 @@
     "Loop Instances": {
       "main": [
         [],
-        [
-          {
-            "node": "Set Instance",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Set Instance": {
-      "main": [
         [
           {
             "node": "Connection State",
