@@ -301,7 +301,7 @@ O ponto de entrada é um **webhook novo no mesmo fluxo de análise** (`POST /ana
    - `ANALISES_BUCKET` = `analises-missoes`.
 4. Criar o bucket **privado** `analises-missoes` no Supabase Storage.
 
-> O vigia depende de uma sessão Evolution que esteja no grupo (hoje `Mobiliza 02 - Tonhão`). Quando a `CENTRAL DE ENGAJAMENTO` entrar no grupo, basta acrescentar/ativar a fonte dela em `radar_pe_mission_sources`.
+> O vigia usa a sessão Evolution **`CENTRAL DE ENGAJAMENTO`** (fonte em `radar_pe_mission_sources`, que precisa estar no grupo). Para trocar de sessão, edite/ative a linha da fonte — o vigia lê a tabela, não o workflow.
 
 ## Roadmap
 
