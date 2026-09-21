@@ -9,6 +9,9 @@ interface Env {
   N8N_NOTION_USERS_WEBHOOK_URL: string
   N8N_AUDIO_RESEND_WEBHOOK_URL: string
   N8N_AUDIO_RESEND_WEBHOOK_SECRET: string
+  N8N_ANALISE_WEBHOOK_URL: string
+  N8N_ANALISE_WEBHOOK_SECRET: string
+  ANALISES_BUCKET: string
   VINCULO_TOKEN: string
   ASSETS: Fetcher
 }
@@ -587,6 +590,78 @@ async function handleGerarMissao(request: Request, env: Env): Promise<Response> 
   }
 }
 
+function encodePath(path: string): string {
+  return path.split('/').map(encodeURIComponent).join('/')
+}
+
+async function uploadAnalise(env: Env, bucket: string, path: string, file: File): Promise<string> {
+  const bytes = await file.arrayBuffer()
+  const up = await fetch(`${env.SUPABASE_URL}/storage/v1/object/${bucket}/${encodePath(path)}`, {
+    method: 'POST',
+    headers: sbHeaders(env, undefined, {
+      'content-type': file.type || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'x-upsert': 'true',
+    }),
+    body: bytes,
+  })
+  if (!up.ok) throw new Error(`Storage upload: ${up.status} ${await up.text()}`)
+
+  const sign = await fetch(`${env.SUPABASE_URL}/storage/v1/object/sign/${bucket}/${encodePath(path)}`, {
+    method: 'POST',
+    headers: sbHeaders(env, undefined, { 'content-type': 'application/json' }),
+    body: JSON.stringify({ expiresIn: 3600 }),
+  })
+  if (!sign.ok) throw new Error(`Storage sign: ${sign.status} ${await sign.text()}`)
+  const data = (await sign.json()) as { signedURL?: string }
+  const signed = data.signedURL ?? ''
+  if (!signed) throw new Error('Storage: URL assinada indisponível')
+  if (/^https?:\/\//.test(signed)) return signed
+  if (signed.startsWith('/storage/v1')) return `${env.SUPABASE_URL}${signed}`
+  return `${env.SUPABASE_URL}/storage/v1${signed}`
+}
+
+async function handleAnalisarMissao(request: Request, env: Env): Promise<Response> {
+  if (!env.N8N_ANALISE_WEBHOOK_URL) {
+    return json({ error: 'Análise não configurada (N8N_ANALISE_WEBHOOK_URL).' }, 500)
+  }
+  let form: FormData
+  try {
+    form = await request.formData()
+  } catch {
+    return json({ error: 'invalid request' }, 400)
+  }
+  const titulo = String(form.get('titulo_missao') ?? '').trim()
+  const base = String(form.get('base_codigo') ?? 'PE').trim().toUpperCase()
+  const file = form.get('arquivo')
+  if (!titulo) return json({ error: 'titulo_missao ausente' }, 400)
+  if (!(file instanceof File)) return json({ error: 'arquivo ausente' }, 400)
+
+  try {
+    const bucket = env.ANALISES_BUCKET || 'analises-missoes'
+    const path = `${base.toLowerCase()}/${titulo}-${Date.now()}.xlsx`
+    const xlsxUrl = await uploadAnalise(env, bucket, path, file)
+
+    let res: Response
+    try {
+      res = await fetch(env.N8N_ANALISE_WEBHOOK_URL, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-radar-secret': env.N8N_ANALISE_WEBHOOK_SECRET,
+        },
+        body: JSON.stringify({ titulo_missao: titulo, base_codigo: base, xlsx_url: xlsxUrl }),
+      })
+    } catch {
+      return json({ error: 'Falha ao chamar o n8n' }, 502)
+    }
+    if (!res.ok) return json({ error: `n8n: ${res.status} ${await res.text()}` }, 502)
+    return json({ ok: true })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'erro inesperado'
+    return json({ error: msg }, 502)
+  }
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url)
@@ -626,6 +701,11 @@ export default {
     if (url.pathname === '/api/missoes/gerar' && request.method === 'POST') {
       if (!(await isAuthed(request, env))) return json({ error: 'unauthorized' }, 401)
       return handleGerarMissao(request, env)
+    }
+
+    if (url.pathname === '/api/missoes/analisar' && request.method === 'POST') {
+      if (!(await isAuthed(request, env))) return json({ error: 'unauthorized' }, 401)
+      return handleAnalisarMissao(request, env)
     }
 
     return json({ error: 'not found' }, 404)

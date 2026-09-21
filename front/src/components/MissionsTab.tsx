@@ -3,8 +3,15 @@ import { useAutoRefresh } from '../lib/useAutoRefresh'
 import { isOfflineError } from '../lib/errors'
 import { useClosing } from '../lib/useClosing'
 import { fmtDate } from '../lib/format'
-import { gerarMissao, listMissoesCapturadas, listMissoesRecentes, setCapturadaStatus } from '../lib/missoes'
-import type { MissaoCapturada, MissaoCapturadaStatus, MissaoResumo } from '../types'
+import {
+  analisarMissao,
+  gerarMissao,
+  listMissoesCapturadas,
+  listMissoesDoProjeto,
+  listMissoesRecentes,
+  setCapturadaStatus,
+} from '../lib/missoes'
+import type { MissaoCapturada, MissaoCapturadaStatus, MissaoResumo, MissaoTabela } from '../types'
 
 const STATUS_LABEL: Record<MissaoCapturadaStatus, string> = {
   nova: 'Nova',
@@ -35,15 +42,22 @@ export default function MissionsTab({ offline }: MissionsTabProps) {
   const [statusFilter, setStatusFilter] = useState('nova')
   const [gerandoId, setGerandoId] = useState<string | null>(null)
   const [active, setActive] = useState<MissaoCapturada | null>(null)
+  const [geradas, setGeradas] = useState<MissaoTabela[]>([])
+  const [analisando, setAnalisando] = useState<MissaoTabela | null>(null)
   const [toast, setToast] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const [cap, mis] = await Promise.all([listMissoesCapturadas(), listMissoesRecentes()])
+      const [cap, mis, ger] = await Promise.all([
+        listMissoesCapturadas(),
+        listMissoesRecentes(),
+        listMissoesDoProjeto('PE'),
+      ])
       setCapturadas(cap)
       setMissoes(mis)
+      setGeradas(ger)
     } catch (e) {
       const err = e as { code?: string | null; message?: string | null; details?: string | null }
       if (!isOfflineError(err)) setError(e instanceof Error ? e.message : 'Falha ao carregar missões')
@@ -156,7 +170,6 @@ export default function MissionsTab({ offline }: MissionsTabProps) {
                 <th>Remetente</th>
                 <th>Links</th>
                 <th>Status</th>
-                <th>Métricas</th>
               </tr>
             </thead>
             <tbody>
@@ -167,15 +180,9 @@ export default function MissionsTab({ offline }: MissionsTabProps) {
                   <td>
                     <div className="missao-links-cell">
                       {(c.links ?? []).map((l, i) => (
-                        <a
-                          key={i}
-                          href={l.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          onClick={(e) => e.stopPropagation()}
-                        >
+                        <span key={i} className="missao-link-text">
                           {l.shortcode || l.url}
-                        </a>
+                        </span>
                       ))}
                     </div>
                   </td>
@@ -183,12 +190,11 @@ export default function MissionsTab({ offline }: MissionsTabProps) {
                     <span className={`badge badge-${c.status}`}>{STATUS_LABEL[c.status]}</span>
                     {c.erro && <div className="missao-erro">{c.erro}</div>}
                   </td>
-                  <td>{c.status === 'gerada' ? <MetricasList cap={c} missaoBySlug={missaoBySlug} /> : <span className="muted">—</span>}</td>
                 </tr>
               ))}
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="state">
+                  <td colSpan={4} className="state">
                     {offline ? 'Sem conexão com o servidor.' : 'Nenhuma missão encontrada.'}
                   </td>
                 </tr>
@@ -196,6 +202,59 @@ export default function MissionsTab({ offline }: MissionsTabProps) {
             </tbody>
           </table>
         </div>
+      )}
+
+      {!loading && !error && (
+        <>
+          <h2 className="section-title">Missões geradas</h2>
+          <div className="panel-note">
+            Missões criadas no banco. Envie o arquivo de comentários (XLSX do ExportComments) para rodar a
+            análise de engajamento.
+          </div>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Criado em</th>
+                  <th>Título</th>
+                  <th>Link encurtado</th>
+                  <th>Cliques</th>
+                  <th>Status</th>
+                  <th>Ação</th>
+                </tr>
+              </thead>
+              <tbody>
+                {geradas.map((m) => (
+                  <tr key={m.id}>
+                    <td className="muted">{fmtDate(m.created_at)}</td>
+                    <td>{m.titulo}</td>
+                    <td className="muted">{m.link_encurtado ?? '—'}</td>
+                    <td className="muted">{m.cliques ?? '—'}</td>
+                    <td>
+                      <span className={`badge ${m.analise_feita ? 'badge-gerada' : 'badge-nova'}`}>
+                        {m.analise_feita ? 'Analisada' : 'Pendente'}
+                      </span>
+                    </td>
+                    <td>
+                      {!m.analise_feita && (
+                        <button type="button" className="btn-approve" onClick={() => setAnalisando(m)}>
+                          Analisar
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+                {geradas.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="state">
+                      Nenhuma missão gerada.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
 
       {active && (
@@ -206,6 +265,18 @@ export default function MissionsTab({ offline }: MissionsTabProps) {
           onGerar={() => handleGerar(active)}
           onDescartar={() => handleDescartar(active)}
           onClose={() => setActive(null)}
+        />
+      )}
+
+      {analisando && (
+        <AnalisarDialog
+          missao={analisando}
+          onClose={() => setAnalisando(null)}
+          onDone={() => {
+            setAnalisando(null)
+            setToast('Análise enviada.')
+            void load()
+          }}
         />
       )}
 
@@ -258,6 +329,11 @@ function CapturaDrawer({ capturada, missaoBySlug, gerando, onGerar, onDescartar,
   }, [startClosing])
 
   const gerada = capturada.status === 'gerada' && (capturada.gerado?.length ?? 0) > 0
+
+  const descartar = async () => {
+    await onDescartar()
+    startClosing()
+  }
 
   const copiar = async () => {
     try {
@@ -346,11 +422,80 @@ function CapturaDrawer({ capturada, missaoBySlug, gerando, onGerar, onDescartar,
               <button type="button" className="btn-approve" disabled={gerando} onClick={() => void onGerar()}>
                 {gerando ? 'Gerando…' : capturada.status === 'erro' ? 'Tentar de novo' : 'Gerar'}
               </button>
-              <button type="button" className="btn-discard" disabled={gerando} onClick={() => void onDescartar()}>
+              <button type="button" className="btn-discard" disabled={gerando} onClick={() => void descartar()}>
                 Descartar
               </button>
             </>
           )}
+        </footer>
+      </div>
+    </div>
+  )
+}
+
+interface AnalisarDialogProps {
+  missao: MissaoTabela
+  onClose: () => void
+  onDone: () => void
+}
+
+function AnalisarDialog({ missao, onClose, onDone }: AnalisarDialogProps) {
+  const [file, setFile] = useState<File | null>(null)
+  const [sending, setSending] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const { closing, startClosing } = useClosing(onClose)
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') startClosing()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [startClosing])
+
+  const enviar = async () => {
+    if (!file) return
+    setSending(true)
+    setErr(null)
+    try {
+      await analisarMissao(missao.titulo, file)
+      onDone()
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Falha ao enviar a análise')
+    } finally {
+      setSending(false)
+    }
+  }
+
+  return (
+    <div className={`modal-overlay${closing ? ' closing' : ''}`} onClick={startClosing}>
+      <div className={`modal modal-wide${closing ? ' closing' : ''}`} onClick={(e) => e.stopPropagation()}>
+        <header className="modal-header">
+          <h2 className="modal-title">Analisar missão</h2>
+          <button type="button" className="drawer-close" onClick={startClosing} aria-label="Fechar">
+            ✕
+          </button>
+        </header>
+        <div className="modal-body">
+          <p className="modal-hint">
+            Missão <strong>{missao.titulo}</strong>. Envie o arquivo <strong>XLSX</strong> exportado do
+            ExportComments para rodar a análise de engajamento.
+          </p>
+          {missao.link && <p className="modal-hint muted">{missao.link_encurtado ?? missao.link}</p>}
+          <input
+            type="file"
+            accept=".xlsx,.xls"
+            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+          />
+          {err && <div className="error">Erro: {err}</div>}
+        </div>
+        <footer className="modal-actions">
+          <button type="button" className="refresh" onClick={startClosing} disabled={sending}>
+            Cancelar
+          </button>
+          <button type="button" className="btn-approve" onClick={() => void enviar()} disabled={sending || !file}>
+            {sending ? 'Enviando…' : 'Enviar análise'}
+          </button>
         </footer>
       </div>
     </div>

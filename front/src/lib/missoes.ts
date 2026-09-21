@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { MissaoCapturada, MissaoGerada, MissaoResumo } from '../types'
+import type { MissaoCapturada, MissaoGerada, MissaoResumo, MissaoTabela } from '../types'
 
 const MISSOES_SCHEMA = 'central_engajamento'
 
@@ -50,4 +50,37 @@ export async function gerarMissao(capturada_id: string, central = 'PE'): Promise
   const data = (await res.json()) as GerarMissaoResult & { error?: string }
   if (!res.ok) throw new Error(data.error ?? 'Falha ao gerar missão')
   return data
+}
+
+export async function listMissoesDoProjeto(codigo = 'PE'): Promise<MissaoTabela[]> {
+  const proj = await supabase
+    .schema(MISSOES_SCHEMA)
+    .from('projetos')
+    .select('id')
+    .eq('codigo', codigo)
+    .limit(1)
+  if (proj.error) throw new Error(proj.error.message)
+  const projetoId = (proj.data?.[0] as { id?: string } | undefined)?.id
+  if (!projetoId) return []
+
+  const { data, error } = await supabase
+    .schema(MISSOES_SCHEMA)
+    .from('missoes')
+    .select('id,titulo,data,link,link_encurtado,cliques,analise_feita,created_at')
+    .eq('projeto_id', projetoId)
+    .eq('ativa', true)
+    .order('created_at', { ascending: false })
+    .limit(120)
+  if (error) throw new Error(error.message)
+  return (data ?? []) as unknown as MissaoTabela[]
+}
+
+export async function analisarMissao(tituloMissao: string, file: File): Promise<void> {
+  const fd = new FormData()
+  fd.append('titulo_missao', tituloMissao)
+  fd.append('base_codigo', 'PE')
+  fd.append('arquivo', file)
+  const res = await fetch('/api/missoes/analisar', { method: 'POST', body: fd })
+  const data = (await res.json().catch(() => ({}))) as { error?: string }
+  if (!res.ok) throw new Error(data.error ?? 'Falha ao enviar a análise')
 }

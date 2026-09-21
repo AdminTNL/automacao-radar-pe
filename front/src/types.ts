@@ -191,3 +191,14 @@ export interface MissaoResumo {
   analise_feita: boolean | null
   metricas_evolucao: { hora: number; curtidas: number | null; comentarios: number | null }[] | null
 }
+
+export interface MissaoTabela {
+  id: string
+  titulo: string
+  data: string | null
+  link: string | null
+  link_encurtado: string | null
+  cliques: number | null
+  analise_feita: boolean | null
+  created_at: string
+}

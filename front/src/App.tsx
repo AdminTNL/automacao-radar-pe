@@ -161,7 +161,9 @@ export default function App() {
           onClick={() => openTab('missoes')}
         >
           Missões
-          {newMissoesCount > 0 && <span className="tab-badge">{newMissoesCount}</span>}
+          <span className={`tab-badge${newMissoesCount > 0 ? '' : ' tab-badge-empty'}`}>
+            {newMissoesCount > 0 ? newMissoesCount : 0}
+          </span>
         </button>
         <button
           type="button"
@@ -169,7 +171,9 @@ export default function App() {
           onClick={() => openTab('casos')}
         >
           Casos pro Radar
-          {newCasesCount > 0 && <span className="tab-badge">{newCasesCount}</span>}
+          <span className={`tab-badge${newCasesCount > 0 ? '' : ' tab-badge-empty'}`}>
+            {newCasesCount > 0 ? newCasesCount : 0}
+          </span>
         </button>
         <button
           type="button"
