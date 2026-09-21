@@ -1545,3 +1545,15 @@ td.cell-clip {
 .badge-gerada { background: rgba(46, 160, 67, 0.15); color: #3fb950; }
 .badge-erro { background: var(--danger-bg); color: var(--danger); }
 .badge-descartada { background: var(--overlay); color: var(--muted); }
+
+.missao-links {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 0 12px;
+}
+
+.drawer-body > .radar-text-label {
+  display: block;
+  margin-top: 8px;
+}

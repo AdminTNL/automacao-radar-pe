@@ -157,6 +157,14 @@ export default function App() {
         </button>
         <button
           type="button"
+          className={`tab ${activeTab === 'missoes' ? 'tab-active' : ''}`}
+          onClick={() => openTab('missoes')}
+        >
+          Missões
+          {newMissoesCount > 0 && <span className="tab-badge">{newMissoesCount}</span>}
+        </button>
+        <button
+          type="button"
           className={`tab ${activeTab === 'casos' ? 'tab-active' : ''}`}
           onClick={() => openTab('casos')}
         >
@@ -169,14 +177,6 @@ export default function App() {
           onClick={() => openTab('audios')}
         >
           Áudios pra Campanha
-        </button>
-        <button
-          type="button"
-          className={`tab ${activeTab === 'missoes' ? 'tab-active' : ''}`}
-          onClick={() => openTab('missoes')}
-        >
-          Missões
-          {newMissoesCount > 0 && <span className="tab-badge">{newMissoesCount}</span>}
         </button>
         <button
           type="button"

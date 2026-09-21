@@ -3,13 +3,7 @@ import { useAutoRefresh } from '../lib/useAutoRefresh'
 import { isOfflineError } from '../lib/errors'
 import { useClosing } from '../lib/useClosing'
 import { fmtDate } from '../lib/format'
-import {
-  gerarMissao,
-  listMissoesCapturadas,
-  listMissoesRecentes,
-  setCapturadaStatus,
-  type GerarMissaoResult,
-} from '../lib/missoes'
+import { gerarMissao, listMissoesCapturadas, listMissoesRecentes, setCapturadaStatus } from '../lib/missoes'
 import type { MissaoCapturada, MissaoCapturadaStatus, MissaoResumo } from '../types'
 
 const STATUS_LABEL: Record<MissaoCapturadaStatus, string> = {
@@ -18,6 +12,14 @@ const STATUS_LABEL: Record<MissaoCapturadaStatus, string> = {
   gerada: 'Gerada',
   descartada: 'Descartada',
   erro: 'Erro',
+}
+
+function mensagemGerada(cap: MissaoCapturada): string {
+  let msg = cap.texto ?? ''
+  for (const g of cap.gerado ?? []) {
+    if (g.orig_url && g.link_encurtado) msg = msg.split(g.orig_url).join(g.link_encurtado)
+  }
+  return msg
 }
 
 interface MissionsTabProps {
@@ -32,7 +34,7 @@ export default function MissionsTab({ offline }: MissionsTabProps) {
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('nova')
   const [gerandoId, setGerandoId] = useState<string | null>(null)
-  const [result, setResult] = useState<GerarMissaoResult | null>(null)
+  const [active, setActive] = useState<MissaoCapturada | null>(null)
   const [toast, setToast] = useState<string | null>(null)
 
   const load = useCallback(async () => {
@@ -88,15 +90,17 @@ export default function MissionsTab({ offline }: MissionsTabProps) {
     setError(null)
     try {
       const res = await gerarMissao(cap.id)
-      setResult(res)
-      setCapturadas((prev) =>
-        prev.map((c) => (c.id === cap.id ? { ...c, status: 'gerada', gerado: res.links, erro: null } : c)),
-      )
+      const patch = { status: 'gerada' as const, gerado: res.links, erro: null }
+      setCapturadas((prev) => prev.map((c) => (c.id === cap.id ? { ...c, ...patch } : c)))
+      setActive((cur) => (cur && cur.id === cap.id ? { ...cur, ...patch } : cur))
+      setToast('Missão gerada.')
       void listMissoesRecentes().then(setMissoes).catch(() => {})
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Falha ao gerar missão'
       setError(msg)
-      setCapturadas((prev) => prev.map((c) => (c.id === cap.id ? { ...c, status: 'erro', erro: msg } : c)))
+      const patch = { status: 'erro' as const, erro: msg }
+      setCapturadas((prev) => prev.map((c) => (c.id === cap.id ? { ...c, ...patch } : c)))
+      setActive((cur) => (cur && cur.id === cap.id ? { ...cur, ...patch } : cur))
     } finally {
       setGerandoId(null)
     }
@@ -105,34 +109,12 @@ export default function MissionsTab({ offline }: MissionsTabProps) {
   const handleDescartar = async (cap: MissaoCapturada) => {
     try {
       await setCapturadaStatus(cap.id, 'descartada')
-      setCapturadas((prev) => prev.map((c) => (c.id === cap.id ? { ...c, status: 'descartada' } : c)))
+      const patch = { status: 'descartada' as const }
+      setCapturadas((prev) => prev.map((c) => (c.id === cap.id ? { ...c, ...patch } : c)))
+      setActive((cur) => (cur && cur.id === cap.id ? { ...cur, ...patch } : cur))
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Falha ao descartar')
     }
-  }
-
-  const renderMetricas = (cap: MissaoCapturada) => {
-    const g = cap.gerado ?? []
-    if (!g.length) return <span className="muted">—</span>
-    return (
-      <div className="missao-metricas">
-        {g.map((link) => {
-          const m = missaoBySlug.get(link.slug)
-          const evolucao = m?.metricas_evolucao ?? []
-          const ultima = evolucao.length ? evolucao[evolucao.length - 1] : null
-          const curtidas = ultima?.curtidas ?? null
-          const comentarios = ultima?.comentarios ?? null
-          return (
-            <div key={link.slug} className="missao-metrica-row">
-              <span className="muted">{link.slug}</span>
-              <span>♥ {curtidas ?? '—'}</span>
-              <span>💬 {comentarios ?? '—'}</span>
-              {m?.cliques != null && <span>🔗 {m.cliques}</span>}
-            </div>
-          )
-        })}
-      </div>
-    )
   }
 
   return (
@@ -158,8 +140,8 @@ export default function MissionsTab({ offline }: MissionsTabProps) {
       </div>
 
       <div className="panel-note">
-        Links de missão capturados do grupo de coordenação. Clique em <strong>Gerar</strong> para encurtar o
-        link, criar a missão e devolver o texto pronto para copiar e mandar de volta no grupo.
+        Links de missão capturados do grupo de coordenação. Clique numa linha para ver a mensagem e{' '}
+        <strong>Gerar</strong> a missão.
       </div>
 
       {error && <div className="error">Erro: {error}</div>}
@@ -172,25 +154,26 @@ export default function MissionsTab({ offline }: MissionsTabProps) {
               <tr>
                 <th>Quando</th>
                 <th>Remetente</th>
-                <th>Mensagem</th>
                 <th>Links</th>
                 <th>Status</th>
                 <th>Métricas</th>
-                <th>Ações</th>
               </tr>
             </thead>
             <tbody>
               {filtered.map((c) => (
-                <tr key={c.id}>
+                <tr key={c.id} className="row-clickable" onClick={() => setActive(c)}>
                   <td className="muted">{fmtDate(c.ts)}</td>
                   <td>{c.sender_nome ?? c.instancia ?? '—'}</td>
-                  <td className="missao-texto">
-                    {c.texto ? c.texto.slice(0, 140) : <span className="muted">—</span>}
-                  </td>
                   <td>
                     <div className="missao-links-cell">
                       {(c.links ?? []).map((l, i) => (
-                        <a key={i} href={l.url} target="_blank" rel="noreferrer">
+                        <a
+                          key={i}
+                          href={l.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                        >
                           {l.shortcode || l.url}
                         </a>
                       ))}
@@ -200,38 +183,12 @@ export default function MissionsTab({ offline }: MissionsTabProps) {
                     <span className={`badge badge-${c.status}`}>{STATUS_LABEL[c.status]}</span>
                     {c.erro && <div className="missao-erro">{c.erro}</div>}
                   </td>
-                  <td>{c.status === 'gerada' ? renderMetricas(c) : <span className="muted">—</span>}</td>
-                  <td>
-                    <div className="missao-acoes">
-                      <button
-                        type="button"
-                        className="btn-approve"
-                        disabled={gerandoId === c.id || c.status === 'gerada' || c.status === 'descartada'}
-                        onClick={() => void handleGerar(c)}
-                      >
-                        {gerandoId === c.id ? 'Gerando…' : c.status === 'erro' ? 'Tentar de novo' : 'Gerar'}
-                      </button>
-                      {c.status !== 'descartada' && c.status !== 'gerada' && (
-                        <button type="button" className="btn-discard" onClick={() => void handleDescartar(c)}>
-                          Descartar
-                        </button>
-                      )}
-                      {c.status === 'gerada' && c.gerado && (
-                        <button
-                          type="button"
-                          className="refresh"
-                          onClick={() => setResult({ capturada_id: c.id, mensagem: c.texto ?? '', links: c.gerado! })}
-                        >
-                          Ver texto
-                        </button>
-                      )}
-                    </div>
-                  </td>
+                  <td>{c.status === 'gerada' ? <MetricasList cap={c} missaoBySlug={missaoBySlug} /> : <span className="muted">—</span>}</td>
                 </tr>
               ))}
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="state">
+                  <td colSpan={5} className="state">
                     {offline ? 'Sem conexão com o servidor.' : 'Nenhuma missão encontrada.'}
                   </td>
                 </tr>
@@ -241,14 +198,54 @@ export default function MissionsTab({ offline }: MissionsTabProps) {
         </div>
       )}
 
-      {result && <ResultDrawer result={result} onClose={() => setResult(null)} />}
+      {active && (
+        <CapturaDrawer
+          capturada={active}
+          missaoBySlug={missaoBySlug}
+          gerando={gerandoId === active.id}
+          onGerar={() => handleGerar(active)}
+          onDescartar={() => handleDescartar(active)}
+          onClose={() => setActive(null)}
+        />
+      )}
 
       {toast && <div className="toast">{toast}</div>}
     </>
   )
 }
 
-function ResultDrawer({ result, onClose }: { result: GerarMissaoResult; onClose: () => void }) {
+function MetricasList({ cap, missaoBySlug }: { cap: MissaoCapturada; missaoBySlug: Map<string, MissaoResumo> }) {
+  const g = cap.gerado ?? []
+  if (!g.length) return <span className="muted">—</span>
+  return (
+    <div className="missao-metricas">
+      {g.map((link) => {
+        const m = missaoBySlug.get(link.slug)
+        const evolucao = m?.metricas_evolucao ?? []
+        const ultima = evolucao.length ? evolucao[evolucao.length - 1] : null
+        return (
+          <div key={link.slug} className="missao-metrica-row">
+            <span className="muted">{link.slug}</span>
+            <span>♥ {ultima?.curtidas ?? '—'}</span>
+            <span>💬 {ultima?.comentarios ?? '—'}</span>
+            {m?.cliques != null && <span>🔗 {m.cliques}</span>}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+interface CapturaDrawerProps {
+  capturada: MissaoCapturada
+  missaoBySlug: Map<string, MissaoResumo>
+  gerando: boolean
+  onGerar: () => Promise<void>
+  onDescartar: () => Promise<void>
+  onClose: () => void
+}
+
+function CapturaDrawer({ capturada, missaoBySlug, gerando, onGerar, onDescartar, onClose }: CapturaDrawerProps) {
   const [copied, setCopied] = useState(false)
   const { closing, startClosing } = useClosing(onClose)
 
@@ -260,9 +257,11 @@ function ResultDrawer({ result, onClose }: { result: GerarMissaoResult; onClose:
     return () => window.removeEventListener('keydown', onKey)
   }, [startClosing])
 
+  const gerada = capturada.status === 'gerada' && (capturada.gerado?.length ?? 0) > 0
+
   const copiar = async () => {
     try {
-      await navigator.clipboard.writeText(result.mensagem)
+      await navigator.clipboard.writeText(mensagemGerada(capturada))
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     } catch {
@@ -275,9 +274,13 @@ function ResultDrawer({ result, onClose }: { result: GerarMissaoResult; onClose:
       <div className={`drawer${closing ? ' closing' : ''}`} onClick={(e) => e.stopPropagation()}>
         <header className="drawer-header">
           <div className="drawer-heading">
-            <div className="drawer-title">Missão {result.ja_existia ? 'já existente' : 'gerada'}</div>
+            <div className="drawer-title">{capturada.sender_nome ?? capturada.instancia ?? 'Missão'}</div>
             <div className="drawer-subtitle muted">
-              {result.links.map((l) => l.slug).join(' · ')}
+              {capturada.grupo_nome ? `${capturada.grupo_nome} · ` : ''}
+              {fmtDate(capturada.ts)}
+            </div>
+            <div className="drawer-subtitle">
+              <span className={`badge badge-${capturada.status}`}>{STATUS_LABEL[capturada.status]}</span>
             </div>
           </div>
           <button type="button" className="drawer-close" onClick={startClosing} aria-label="Fechar">
@@ -286,20 +289,68 @@ function ResultDrawer({ result, onClose }: { result: GerarMissaoResult; onClose:
         </header>
 
         <div className="drawer-body">
-          <textarea className="copy-area" readOnly value={result.mensagem} />
+          <div className="messages">
+            <div className="msg msg-contact">
+              <div className="msg-stack">
+                <div className="bubble bubble-contact">{capturada.texto}</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="radar-text-label">Links</div>
           <div className="missao-links">
-            {result.links.map((l) => (
-              <a key={l.slug} href={l.link_encurtado} target="_blank" rel="noreferrer">
-                {l.link_encurtado || l.url}
+            {(capturada.links ?? []).map((l, i) => (
+              <a key={i} href={l.url} target="_blank" rel="noreferrer">
+                {l.shortcode || l.url}
               </a>
             ))}
           </div>
+
+          {capturada.erro && <div className="error">Erro: {capturada.erro}</div>}
+
+          {gerada && (
+            <>
+              <div className="radar-text-label">Mensagem pronta</div>
+              <div className="messages">
+                <div className="msg msg-me">
+                  <div className="msg-stack">
+                    <div className="bubble bubble-me">{mensagemGerada(capturada)}</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="radar-text-label">Links encurtados</div>
+              <div className="missao-links">
+                {(capturada.gerado ?? []).map((g) => (
+                  <a key={g.slug} href={g.link_encurtado} target="_blank" rel="noreferrer">
+                    {g.link_encurtado || g.url}
+                  </a>
+                ))}
+              </div>
+
+              <div className="radar-text-label">Métricas</div>
+              <MetricasList cap={capturada} missaoBySlug={missaoBySlug} />
+            </>
+          )}
         </div>
 
         <footer className="drawer-actions">
-          <button type="button" className="btn-approve" onClick={() => void copiar()}>
-            {copied ? 'Copiado!' : 'Copiar texto'}
-          </button>
+          {capturada.status === 'descartada' ? (
+            <span className="muted">Descartada.</span>
+          ) : gerada ? (
+            <button type="button" className="btn-approve" onClick={() => void copiar()}>
+              {copied ? 'Copiado!' : 'Copiar texto'}
+            </button>
+          ) : (
+            <>
+              <button type="button" className="btn-approve" disabled={gerando} onClick={() => void onGerar()}>
+                {gerando ? 'Gerando…' : capturada.status === 'erro' ? 'Tentar de novo' : 'Gerar'}
+              </button>
+              <button type="button" className="btn-discard" disabled={gerando} onClick={() => void onDescartar()}>
+                Descartar
+              </button>
+            </>
+          )}
         </footer>
       </div>
     </div>
