@@ -1,0 +1,510 @@
+{
+  "name": "Vigia Missões PE",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "* * * * *"
+            }
+          ]
+        }
+      },
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "165ff54f-3228-4051-a162-a8c36006e163"
+    },
+    {
+      "parameters": {
+        "useCustomSchema": false,
+        "resource": "row",
+        "operation": "getAll",
+        "tableId": "radar_pe_mission_sources",
+        "returnAll": true,
+        "filterType": "string",
+        "filterString": "ativo=eq.true"
+      },
+      "name": "Fontes ativas",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        220,
+        0
+      ],
+      "id": "4b842b88-6a26-4a75-9afe-7afead399bab",
+      "credentials": {
+        "supabaseApi": {
+          "id": "2s75u9F7plz4ovFN",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nif (!items.length) return [];\nconst out = [];\nfor (const it of items) {\n  const s = it.json || {};\n  if (!s.instancia || !s.grupo_jid) continue;\n  const cp = s.checkpoint ? Date.parse(s.checkpoint) : 0;\n  const since = cp ? Math.floor(cp / 1000) - 120 : Math.floor(Date.now() / 1000);\n  const esc = v => String(v == null ? '' : v).replace(/'/g, \"''\");\n  const senders = [s.sender_jid, s.sender_lid].filter(Boolean).map(x => `'${esc(x)}'`).join(',');\n  if (!senders) continue;\n  const inst = esc(s.instancia), gj = esc(s.grupo_jid), gn = esc(s.grupo_nome), sj = esc(s.sender_jid), sn = esc(s.sender_nome), sid = esc(s.id);\n  const query = `WITH base AS (\n  SELECT m.key->>'id' AS msg_id, m.\"messageTimestamp\" AS ts, m.\"pushName\" AS push_name,\n         COALESCE(NULLIF(m.key->>'participantAlt',''), m.key->>'participant') AS sender_jid,\n         COALESCE(m.message->>'conversation', m.message->'extendedTextMessage'->>'text', m.message->'imageMessage'->>'caption', m.message->'videoMessage'->>'caption','') AS body\n  FROM \"Message\" m JOIN \"Instance\" i ON i.\"id\" = m.\"instanceId\"\n  WHERE i.\"name\" = '${inst}' AND m.key->>'remoteJid' = '${gj}'\n    AND NOT COALESCE((m.key->>'fromMe')::boolean, false)\n    AND (m.key->>'participantAlt' IN (${senders}) OR m.key->>'participant' IN (${senders}))\n    AND m.\"messageTimestamp\" >= ${since}\n    AND (COALESCE(m.message->>'conversation','') ILIKE '%instagram%' OR COALESCE(m.message->'extendedTextMessage'->>'text','') ILIKE '%instagram%' OR COALESCE(m.message->'imageMessage'->>'caption','') ILIKE '%instagram%' OR COALESCE(m.message->'videoMessage'->>'caption','') ILIKE '%instagram%' OR COALESCE(m.message->>'conversation','') ILIKE '%engaja.pro%' OR COALESCE(m.message->'extendedTextMessage'->>'text','') ILIKE '%engaja.pro%')\n)\nSELECT '${sid}' AS source_id, '${inst}' AS instancia, '${gj}' AS grupo_jid, '${gn}' AS grupo_nome, '${sj}' AS sender_jid, '${sn}' AS sender_nome,\n       COALESCE(jsonb_agg(jsonb_build_object('msg_id',msg_id,'ts',ts,'push_name',push_name,'sender_jid',sender_jid,'body',body) ORDER BY ts),'[]')::text AS rows\nFROM base`;\n  out.push({ json: { source_id: s.id, instancia: s.instancia, grupo_jid: s.grupo_jid, grupo_nome: s.grupo_nome || '', sender_jid: s.sender_jid || '', sender_nome: s.sender_nome || '', since, query } });\n}\nreturn out;"
+      },
+      "name": "Monta consultas",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "id": "5d43a885-9020-43ff-a686-bddf61dc8ab4"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.query }}",
+        "options": {}
+      },
+      "name": "Busca Msgs Evo",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        660,
+        0
+      ],
+      "id": "9d778474-e308-4d77-adec-2982e2429fcc",
+      "credentials": {
+        "postgres": {
+          "id": "xp5XUZ1wC4LcoiBl",
+          "name": "admin evo"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://database.tnledu.shop/rest/v1/radar_pe_mission_sources?id=eq.{{ $json.source_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ checkpoint: $now.toISO() }) }}",
+        "options": {}
+      },
+      "name": "Avança checkpoint",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        880,
+        -180
+      ],
+      "id": "ef54f2d3-9bca-4ab2-9e63-3979386ade3d",
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "supabaseApi": {
+          "id": "2s75u9F7plz4ovFN",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const URL_RE = /https?:\\/\\/(?:www\\.)?(?:instagram\\.com|instagr\\.am|engaja\\.pro|vinculo\\.pro)\\/[^\\s)'\"]+/gi;\nconst clean = u => u.replace(/[?#].*$/, '').replace(/\\/+$/, '');\nconst out = [];\nfor (const it of $input.all()) {\n  const r = it.json || {};\n  if (!r.rows) continue;\n  let rows = [];\n  try { rows = JSON.parse(r.rows) || []; } catch (e) { rows = []; }\n  for (const m of rows) {\n    const urls = [...new Set((String(m.body || '')).match(URL_RE) || [])].map(clean);\n    if (!urls.length) continue;\n    const tsIso = m.ts ? new Date(Number(m.ts) * 1000).toISOString() : null;\n    for (const u of urls) {\n      const isShort = /engaja\\.pro|vinculo\\.pro/.test(u);\n      out.push({ json: {\n        source_id: r.source_id, instancia: r.instancia, grupo_jid: r.grupo_jid, grupo_nome: r.grupo_nome,\n        sender_jid: m.sender_jid || r.sender_jid, sender_nome: r.sender_nome,\n        msg_id: m.msg_id, ts: tsIso, texto: String(m.body || ''),\n        url_raw: u, precisa_resolver: isShort, slug: isShort ? (u.split('/').pop() || '') : ''\n      }});\n    }\n  }\n}\nreturn out;"
+      },
+      "name": "Explode links",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        60
+      ],
+      "id": "23ce2a7e-d9c2-4a32-89f1-b000319a3271"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "35115b3d-a850-4cb4-bf8e-9aac64e1c3b3",
+              "leftValue": "={{ $json.precisa_resolver === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {
+          "combine": "and"
+        }
+      },
+      "name": "É encurtador?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1100,
+        60
+      ],
+      "id": "ba2be4df-e6ae-440f-85d4-a641064949f8"
+    },
+    {
+      "parameters": {
+        "jsCode": "const sd = $getWorkflowStaticData('global');\nconst token = String(sd.vinculoToken || '');\nreturn $input.all().filter(i => i.json && i.json.slug).map(i => ({ json: { ...i.json, vinculoToken: token } }));"
+      },
+      "name": "Prepara slug (ctx)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        -100
+      ],
+      "id": "13bc5b37-8e49-480b-824f-413ac32da7a2"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://vinculo.pro/api/links",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "domain",
+              "value": "engaja.pro"
+            },
+            {
+              "name": "q",
+              "value": "={{ $json.slug }}"
+            },
+            {
+              "name": "page_size",
+              "value": "1"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.vinculoToken }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Resolve vinculo.pro",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1540,
+        -100
+      ],
+      "id": "1c5038d7-4325-41ca-9e4f-99a5df8f8304",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const clean = u => u.replace(/[?#].*$/, '').replace(/\\/+$/, '');\nreturn $input.all().map(item => {\n  const j = item.json || {};\n  let dest = '';\n  if (Array.isArray(j.items)) {\n    const hit = j.items.find(x => x && x.destination_url && (!j.slug || !x.slug || x.slug === j.slug)) || j.items.find(x => x && x.destination_url);\n    dest = hit ? String(hit.destination_url || '') : '';\n  } else if (j.destination_url) { dest = String(j.destination_url); }\n  const u = clean(dest);\n  const isInsta = /instagram\\.com|instagr\\.am/.test(u);\n  const short = String(j.url_raw || '');\n  let url = '', short_url = '';\n  if (dest && isInsta) { url = u; short_url = short; }\n  else if (short) { url = short; short_url = short; }\n  else { return { json: { __noop: true } }; }\n  const m = url.match(/(?:reel|reels|p|tv)\\/([A-Za-z0-9_-]+)/);\n  return { json: { ...j, url, short_url, shortcode: m ? m[1] : '', kind: /\\/reel/.test(url) ? 'reel' : 'post' } };\n});"
+      },
+      "name": "Aplica destino",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        -100
+      ],
+      "id": "83bbf506-bab4-4d64-930b-fd1cfff39de3"
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map(item => {\n  const j = item.json || {};\n  if (!j.url_raw) return { json: { __noop: true } };\n  const u = String(j.url_raw);\n  if (!/instagram\\.com|instagr\\.am/.test(u)) return { json: { __noop: true } };\n  const m = u.match(/(?:reel|reels|p|tv)\\/([A-Za-z0-9_-]+)/);\n  return { json: { ...j, url: u, short_url: '', shortcode: m ? m[1] : '', kind: /\\/reel/.test(u) ? 'reel' : 'post' } };\n});"
+      },
+      "name": "Passa direto",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        200
+      ],
+      "id": "fa9535ff-461b-4246-bbb8-a0b577bac634"
+    },
+    {
+      "parameters": {
+        "mode": "append",
+        "numberInputs": 2,
+        "options": {}
+      },
+      "name": "Merge",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1980,
+        0
+      ],
+      "id": "eb6f6318-a38c-4d2b-a8d3-4d5c353e2fc7"
+    },
+    {
+      "parameters": {
+        "jsCode": "const byId = new Map();\nfor (const it of $input.all()) {\n  const j = it.json || {};\n  if (!j.msg_id || !j.url) continue;\n  if (!byId.has(j.msg_id)) byId.set(j.msg_id, {\n    source_id: j.source_id, instancia: j.instancia, grupo_jid: j.grupo_jid, grupo_nome: j.grupo_nome,\n    sender_jid: j.sender_jid, sender_nome: j.sender_nome, msg_id: j.msg_id, ts: j.ts, texto: j.texto, links: []\n  });\n  const g = byId.get(j.msg_id);\n  if (!g.links.some(l => l.url === j.url)) g.links.push({ url: j.url, short_url: j.short_url || '', shortcode: j.shortcode || '', kind: j.kind || '', orig_url: j.url_raw || '' });\n}\nreturn [...byId.values()].map(g => ({ json: g }));"
+      },
+      "name": "Agrupa por msg_id",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        0
+      ],
+      "id": "f1877e51-18c6-4ed0-9ef0-a255eca2101b"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "9f86c764-b8a3-4d29-a0b4-926b63ae43f8",
+              "leftValue": "={{ !!$json.msg_id }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {
+          "combine": "and"
+        }
+      },
+      "name": "Tem captura?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2420,
+        0
+      ],
+      "id": "7419ca88-6975-4d27-9f7d-9ce39729a555"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://database.tnledu.shop/rest/v1/rpc/radar_pe_upsert_missao_capturada",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_source_id: $json.source_id || null, p_instancia: $json.instancia, p_grupo_jid: $json.grupo_jid, p_grupo_nome: $json.grupo_nome, p_sender_jid: $json.sender_jid, p_sender_nome: $json.sender_nome, p_msg_id: $json.msg_id, p_ts: $json.ts, p_texto: $json.texto, p_links: $json.links }) }}",
+        "options": {}
+      },
+      "name": "Upsert captura",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        2640,
+        -60
+      ],
+      "id": "6f449a71-cb1a-4e88-bcf2-96c9416c43ff",
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "supabaseApi": {
+          "id": "2s75u9F7plz4ovFN",
+          "name": "Supabase account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Fontes ativas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fontes ativas": {
+      "main": [
+        [
+          {
+            "node": "Monta consultas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Monta consultas": {
+      "main": [
+        [
+          {
+            "node": "Busca Msgs Evo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Busca Msgs Evo": {
+      "main": [
+        [
+          {
+            "node": "Avança checkpoint",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Explode links",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Explode links": {
+      "main": [
+        [
+          {
+            "node": "É encurtador?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "É encurtador?": {
+      "main": [
+        [
+          {
+            "node": "Prepara slug (ctx)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Passa direto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepara slug (ctx)": {
+      "main": [
+        [
+          {
+            "node": "Resolve vinculo.pro",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve vinculo.pro": {
+      "main": [
+        [
+          {
+            "node": "Aplica destino",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aplica destino": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Passa direto": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Agrupa por msg_id",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agrupa por msg_id": {
+      "main": [
+        [
+          {
+            "node": "Tem captura?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tem captura?": {
+      "main": [
+        [
+          {
+            "node": "Upsert captura",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": {
+    "global": {
+      "vinculoToken": ""
+    }
+  }
+}

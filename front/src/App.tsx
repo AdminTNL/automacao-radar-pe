@@ -10,9 +10,10 @@ import SessionsTab from './components/SessionsTab'
 import CasesTab from './components/CasesTab'
 import AudiosTab from './components/AudiosTab'
 import RadarTab from './components/RadarTab'
+import MissionsTab from './components/MissionsTab'
 import Login from './components/Login'
 
-type Tab = 'contatos' | 'sessoes' | 'casos' | 'audios' | 'radar'
+type Tab = 'contatos' | 'sessoes' | 'casos' | 'audios' | 'radar' | 'missoes'
 type AuthState = 'loading' | 'authed' | 'guest'
 
 export default function App() {
@@ -22,6 +23,7 @@ export default function App() {
   const [offline, setOffline] = useState(false)
   const [activeTab, setActiveTab] = useState<Tab>('contatos')
   const [newCasesCount, setNewCasesCount] = useState(0)
+  const [newMissoesCount, setNewMissoesCount] = useState(0)
   const lastSeenRef = useRef<string | null>(null)
 
   useEffect(() => {
@@ -96,8 +98,26 @@ export default function App() {
     void checkNewCases()
   }, 60000)
 
+  const checkNewMissoes = useCallback(async () => {
+    const { count, error } = await supabase
+      .from('radar_pe_missoes_capturadas')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'nova')
+    if (!error) setNewMissoesCount(count ?? 0)
+  }, [])
+
+  useEffect(() => {
+    if (auth !== 'authed') return
+    void checkNewMissoes()
+  }, [auth, checkNewMissoes])
+
+  useAutoRefresh(() => {
+    void checkNewMissoes()
+  }, 60000)
+
   const openTab = (tab: Tab) => {
     if (tab === 'casos') setNewCasesCount(0)
+    if (tab === 'missoes') setNewMissoesCount(0)
     setActiveTab(tab)
   }
 
@@ -152,6 +172,14 @@ export default function App() {
         </button>
         <button
           type="button"
+          className={`tab ${activeTab === 'missoes' ? 'tab-active' : ''}`}
+          onClick={() => openTab('missoes')}
+        >
+          Missões
+          {newMissoesCount > 0 && <span className="tab-badge">{newMissoesCount}</span>}
+        </button>
+        <button
+          type="button"
           className={`tab ${activeTab === 'radar' ? 'tab-active' : ''}`}
           onClick={() => openTab('radar')}
         >
@@ -173,6 +201,8 @@ export default function App() {
         <CasesTab instances={instances} offline={offline} />
       ) : activeTab === 'radar' ? (
         <RadarTab offline={offline} />
+      ) : activeTab === 'missoes' ? (
+        <MissionsTab offline={offline} />
       ) : (
         <AudiosTab instances={instances} offline={offline} />
       )}

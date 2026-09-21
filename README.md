@@ -38,6 +38,7 @@ Evolution (Postgres, cred "admin evo")  ──►  n8n  ──►  Supabase (rad
 | `n8n/10_reenviar_audio.json` | Sub: webhook → reenvia um áudio com erro pro Drive (chamado pelo Worker `/api/audio/resend`) |
 | `n8n/11_notion_list.json` | Sub: webhook → consulta o database "Radar Mobiliza PE" no Notion e devolve as páginas (usado pela aba "Radar Mobiliza PE") |
 | `n8n/12_notion_list_users.json` | Sub: webhook → lista os usuários do workspace do Notion (usado no vínculo de responsáveis no front) |
+| `n8n/13_vigia_missoes.json` | Vigia: captura links de missão de um remetente num grupo da Evolution (aba "Missões") |
 | `queries_validacao.md` | Queries pra conferir o resultado do backfill |
 | `arquitetura.md` | Desenho técnico (estado atual + Etapas 2b/3) pra alinhamento com o time |
 | `front/` | CRM básico (Vite + React + TS) pra ver/editar `radar_pe_contacts` |
@@ -262,6 +263,23 @@ on conflict (emoji) do nothing;
 ```
 
 > A Evolution devolve o áudio em base64 (o `To Binary` lê `base64` no topo ou em `media.base64`, e remove o prefixo `data:...;base64,`). Contatos `@lid` sem número podem não localizar a mídia — nesses casos o log fica como `erro` em `radar_pe_audio_saves`, e o time pode **Reenviar** pela aba do front.
+
+## Missões (captura do grupo de coordenação)
+
+A aba **"Missões"** do front mostra os links de missão que um remetente (ex.: Eryck) posta num grupo de coordenação. O fluxo `13 - Vigia Missões PE` lê o Postgres da Evolution a cada minuto, resolve o link (Instagram direto ou encurtador `engaja.pro`) e grava a candidata em `radar_pe_missoes_capturadas`. No front, o operador clica **Gerar**: o Worker (`POST /api/missoes/gerar`) encurta o link em `engaja.pro`, cria a missão em `central_engajamento.missoes` (sem Notion), dispara a evolução de métricas e devolve o texto pronto para **copiar** e mandar de volta no grupo.
+
+- **Fontes monitoradas** ficam em `radar_pe_mission_sources` (instância, grupo, remetente, checkpoint). Trocar de instância/grupo é editar a linha — o vigia lê a config da tabela, não hardcoded.
+- **Idempotência**: captura por `msg_id` (`unique`); geração por `link`/`titulo` (não duplica missão do mesmo post).
+- **Status da candidata**: `nova → gerada` (ou `descartada`/`erro`). Candidatas com erro podem ser tentadas de novo.
+- **Métricas**: a aba lê `central_engajamento.missoes` (curtidas/comentários antes, evolução 24h, depois) — por isso o proxy do Worker repassa `Accept-Profile`/`Content-Profile`.
+
+### Setup
+
+1. Rodar a seção **"12. Missões"** do `schema.sql` no Supabase (cria `radar_pe_mission_sources`, `radar_pe_missoes_capturadas` e as RPCs; já semeia a fonte do grupo `[coord] Mobiliza PE`).
+2. Importar o `n8n/13_vigia_missoes.json` e, no **staticData** do workflow, preencher `vinculoToken` (Bearer do `vinculo.pro`, mesmo token usado no fluxo "Vigia Jamilly"). Ativar.
+3. No Worker, definir o secret `VINCULO_TOKEN` (`wrangler secret put VINCULO_TOKEN`) — mesmo token do passo 2.
+
+> O vigia depende de uma sessão Evolution que esteja no grupo (hoje `Mobiliza 02 - Tonhão`). Quando a `CENTRAL DE ENGAJAMENTO` entrar no grupo, basta acrescentar/ativar a fonte dela em `radar_pe_mission_sources`.
 
 ## Roadmap
 

@@ -9,8 +9,12 @@ interface Env {
   N8N_NOTION_USERS_WEBHOOK_URL: string
   N8N_AUDIO_RESEND_WEBHOOK_URL: string
   N8N_AUDIO_RESEND_WEBHOOK_SECRET: string
+  VINCULO_TOKEN: string
   ASSETS: Fetcher
 }
+
+const EVOLUCAO_WEBHOOK_URL = 'https://webhookn8n.tnledu.shop/webhook/evolucao-metricas'
+const VINCULO_API = 'https://vinculo.pro/api/links'
 
 const COOKIE = 'radar_session'
 const MAX_AGE = 31536000 // 1 ano (teto prático; sessão morre ao rotacionar AUTH_SECRET)
@@ -122,7 +126,7 @@ async function proxySupabase(request: Request, env: Env): Promise<Response> {
   target.search = url.search
 
   const headers = new Headers()
-  for (const name of ['content-type', 'accept', 'prefer', 'x-client-info']) {
+  for (const name of ['content-type', 'accept', 'prefer', 'x-client-info', 'accept-profile', 'content-profile']) {
     const value = request.headers.get(name)
     if (value) headers.set(name, value)
   }
@@ -321,6 +325,268 @@ async function handleAudioResend(request: Request, env: Env): Promise<Response> 
   return json({ ok: true })
 }
 
+interface CapturadaLink {
+  url: string
+  short_url?: string
+  shortcode?: string
+  kind?: string
+  orig_url?: string
+}
+
+interface Capturada {
+  id: string
+  instancia: string | null
+  grupo_nome: string | null
+  sender_nome: string | null
+  msg_id: string
+  ts: string | null
+  texto: string | null
+  links: CapturadaLink[] | null
+  status: string
+  gerado: GeradoLink[] | null
+}
+
+interface GeradoLink {
+  slug: string
+  url: string
+  orig_url: string
+  link_encurtado: string
+  missao_id: string
+}
+
+function sbHeaders(env: Env, schema?: string, extra?: Record<string, string>): Headers {
+  const headers = new Headers({
+    apikey: env.SUPABASE_SERVICE_ROLE_KEY,
+    authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+    accept: 'application/json',
+  })
+  if (schema) {
+    headers.set('accept-profile', schema)
+    headers.set('content-profile', schema)
+  }
+  if (extra) for (const [k, v] of Object.entries(extra)) headers.set(k, v)
+  return headers
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function sbFetch(url: string, init: RequestInit, tries = 3): Promise<Response> {
+  let lastErr: unknown
+  for (let attempt = 0; attempt < tries; attempt++) {
+    try {
+      const res = await fetch(url, init)
+      if (res.status >= 500 && res.status <= 599) {
+        lastErr = new Error(`${res.status}`)
+        await sleep(400 * (attempt + 1))
+        continue
+      }
+      return res
+    } catch (e) {
+      lastErr = e
+      await sleep(400 * (attempt + 1))
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error('falha de rede no Supabase')
+}
+
+async function sbSelect<T>(env: Env, table: string, query: string, schema?: string): Promise<T[]> {
+  const res = await sbFetch(`${env.SUPABASE_URL}/rest/v1/${table}?${query}`, { headers: sbHeaders(env, schema) })
+  if (!res.ok) throw new Error(`Supabase ${table}: ${res.status} ${await res.text()}`)
+  const data = (await res.json()) as T[]
+  return Array.isArray(data) ? data : ([data] as T[])
+}
+
+async function sbUpsert<T>(
+  env: Env,
+  table: string,
+  row: Record<string, unknown>,
+  onConflict: string,
+  schema?: string,
+): Promise<T[]> {
+  const res = await sbFetch(`${env.SUPABASE_URL}/rest/v1/${table}?on_conflict=${encodeURIComponent(onConflict)}`, {
+    method: 'POST',
+    headers: sbHeaders(env, schema, {
+      'content-type': 'application/json',
+      prefer: 'resolution=merge-duplicates,return=representation',
+    }),
+    body: JSON.stringify(row),
+  })
+  if (!res.ok) throw new Error(`Supabase ${table}: ${res.status} ${await res.text()}`)
+  const data = (await res.json()) as T[]
+  return Array.isArray(data) ? data : ([data] as T[])
+}
+
+async function sbRpc<T>(env: Env, fn: string, args: Record<string, unknown>): Promise<T> {
+  const res = await sbFetch(`${env.SUPABASE_URL}/rest/v1/rpc/${fn}`, {
+    method: 'POST',
+    headers: sbHeaders(env, undefined, { 'content-type': 'application/json' }),
+    body: JSON.stringify(args),
+  })
+  const text = await res.text()
+  if (!res.ok) throw new Error(`Supabase rpc ${fn}: ${res.status} ${text}`)
+  return (text ? (JSON.parse(text) as T) : (null as T))
+}
+
+async function shortenUrl(env: Env, slug: string, url: string): Promise<string> {
+  if (!env.VINCULO_TOKEN) throw new Error('VINCULO_TOKEN não configurado')
+  let lastErr: unknown
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(VINCULO_API, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${env.VINCULO_TOKEN}` },
+        body: JSON.stringify({ domain: 'engaja.pro', slug, destination_url: url }),
+      })
+      if (!res.ok) throw new Error(`${res.status} ${await res.text()}`)
+      const data = (await res.json()) as { short_url?: string; link?: { short_url?: string } }
+      const short = data.short_url ?? data.link?.short_url ?? ''
+      if (!short) throw new Error('resposta do encurtador sem short_url')
+      return short.replace(/\/+$/, '')
+    } catch (e) {
+      lastErr = e
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error('falha ao encurtar')
+}
+
+async function fireEvolucao(missaoId: string, link: string): Promise<void> {
+  try {
+    await fetch(EVOLUCAO_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ missaoId, link }),
+    })
+  } catch {
+    return
+  }
+}
+
+function recifeDate(): { y: string; m: string; d: string } {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Recife',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date())
+  const [y, m, d] = parts.split('-')
+  return { y, m, d }
+}
+
+async function handleGerarMissao(request: Request, env: Env): Promise<Response> {
+  let body: { capturada_id?: unknown; central?: unknown }
+  try {
+    body = (await request.json()) as typeof body
+  } catch {
+    return json({ error: 'invalid request' }, 400)
+  }
+  const id = typeof body?.capturada_id === 'string' ? body.capturada_id : ''
+  if (!id) return json({ error: 'capturada_id ausente' }, 400)
+  const central = (typeof body?.central === 'string' && body.central.trim() ? body.central.trim() : 'PE').toUpperCase()
+
+  try {
+    const capRows = await sbSelect<Capturada>(
+      env,
+      'radar_pe_missoes_capturadas',
+      `id=eq.${encodeURIComponent(id)}&select=*&limit=1`,
+    )
+    const cap = capRows[0]
+    if (!cap) return json({ error: 'Captura não encontrada' }, 404)
+    if (cap.status === 'gerada' && Array.isArray(cap.gerado)) {
+      return json({ capturada_id: cap.id, mensagem: cap.texto ?? '', links: cap.gerado, ja_existia: true })
+    }
+    const links = (cap.links ?? []).filter((l) => l && l.url)
+    if (!links.length) return json({ error: 'Captura sem links' }, 400)
+
+    const projRows = await sbSelect<{ id: string }>(
+      env,
+      'projetos',
+      `codigo=eq.${encodeURIComponent(central)}&select=id&limit=1`,
+      'central_engajamento',
+    )
+    const projetoId = projRows[0]?.id
+    if (!projetoId) return json({ error: `Projeto ${central} não encontrado` }, 400)
+
+    const { y, m, d } = recifeDate()
+    const dayRows = await sbSelect<{ titulo: string }>(
+      env,
+      'missoes',
+      `select=titulo&titulo=like.${encodeURIComponent(`missaope%-${d}-${m}`)}&limit=500`,
+      'central_engajamento',
+    )
+    let seq = dayRows.reduce((max, r) => {
+      const hit = /^missaope(\d+)-/.exec(r.titulo ?? '')
+      return hit ? Math.max(max, parseInt(hit[1], 10)) : max
+    }, 0)
+
+    const gerado: GeradoLink[] = []
+    for (const l of links) {
+      const url = l.url
+      const orig = l.orig_url || l.url
+      const existing = await sbSelect<{ id: string; titulo: string; link_encurtado: string }>(
+        env,
+        'missoes',
+        `select=id,titulo,link_encurtado&link=eq.${encodeURIComponent(url)}&limit=1`,
+        'central_engajamento',
+      )
+      if (existing[0]) {
+        gerado.push({
+          slug: existing[0].titulo,
+          url,
+          orig_url: orig,
+          link_encurtado: existing[0].link_encurtado,
+          missao_id: existing[0].id,
+        })
+        continue
+      }
+      seq += 1
+      const slug = `missaope${String(seq).padStart(2, '0')}-${d}-${m}`
+      const linkEncurtado = /engaja\.pro|vinculo\.pro/.test(url) ? url : await shortenUrl(env, slug, url)
+      gerado.push({ slug, url, orig_url: orig, link_encurtado: linkEncurtado, missao_id: '' })
+    }
+
+    let mensagem = cap.texto ?? ''
+    for (const g of gerado) {
+      if (g.orig_url && g.link_encurtado) mensagem = mensagem.split(g.orig_url).join(g.link_encurtado)
+    }
+
+    for (const g of gerado) {
+      if (g.missao_id) continue
+      const rows = await sbUpsert<{ id: string }>(
+        env,
+        'missoes',
+        {
+          titulo: g.slug,
+          data: `${y}-${m}-${d}`,
+          link: g.url,
+          link_encurtado: g.link_encurtado,
+          projeto_id: projetoId,
+          mensagem_envio: mensagem,
+        },
+        'titulo',
+        'central_engajamento',
+      )
+      g.missao_id = rows[0]?.id ?? ''
+    }
+
+    for (const g of gerado) {
+      if (g.missao_id) await fireEvolucao(g.missao_id, g.url)
+    }
+
+    await sbRpc(env, 'radar_pe_mark_missao_capturada_gerada', { p_id: cap.id, p_gerado: gerado })
+    return json({ capturada_id: cap.id, mensagem, links: gerado })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'erro inesperado'
+    try {
+      await sbRpc(env, 'radar_pe_set_missao_capturada_status', { p_id: id, p_status: 'erro', p_erro: msg })
+    } catch {
+      return json({ error: msg }, 502)
+    }
+    return json({ error: msg }, 502)
+  }
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url)
@@ -355,6 +621,11 @@ export default {
     if (url.pathname === '/api/audio/resend' && request.method === 'POST') {
       if (!(await isAuthed(request, env))) return json({ error: 'unauthorized' }, 401)
       return handleAudioResend(request, env)
+    }
+
+    if (url.pathname === '/api/missoes/gerar' && request.method === 'POST') {
+      if (!(await isAuthed(request, env))) return json({ error: 'unauthorized' }, 401)
+      return handleGerarMissao(request, env)
     }
 
     return json({ error: 'not found' }, 404)

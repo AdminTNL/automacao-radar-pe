@@ -1460,3 +1460,88 @@ td.cell-clip {
     animation: none;
   }
 }
+
+.missao-texto {
+  max-width: 380px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 13px;
+}
+
+.missao-links-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 220px;
+}
+
+.missao-links-cell a,
+.missao-links a {
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.missao-links-cell a:hover,
+.missao-links a:hover {
+  text-decoration: underline;
+}
+
+.missao-erro {
+  margin-top: 4px;
+  color: var(--danger);
+  font-size: 12px;
+  max-width: 200px;
+  white-space: normal;
+}
+
+.missao-acoes {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.missao-acoes .btn-approve,
+.missao-acoes .btn-discard {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
+.missao-metricas {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.missao-metrica-row {
+  display: flex;
+  gap: 10px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.copy-area {
+  width: 100%;
+  min-height: 160px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--overlay);
+  color: var(--text-bright);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.45;
+  resize: vertical;
+  outline: none;
+  white-space: pre-wrap;
+}
+
+.badge-nova { background: var(--accent-subtle); color: var(--accent); }
+.badge-gerando { background: var(--accent-subtle); color: var(--accent); }
+.badge-gerada { background: rgba(46, 160, 67, 0.15); color: #3fb950; }
+.badge-erro { background: var(--danger-bg); color: var(--danger); }
+.badge-descartada { background: var(--overlay); color: var(--muted); }

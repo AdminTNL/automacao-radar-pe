@@ -145,3 +145,51 @@ export interface NotionRadarRow {
   devolutiva: string
   outros?: { key: string; value: string }[]
 }
+
+export interface MissaoCapturadaLink {
+  url: string
+  short_url?: string
+  shortcode?: string
+  kind?: string
+  orig_url?: string
+}
+
+export type MissaoCapturadaStatus = 'nova' | 'gerando' | 'gerada' | 'descartada' | 'erro'
+
+export interface MissaoGerada {
+  slug: string
+  url: string
+  orig_url: string
+  link_encurtado: string
+  missao_id: string
+}
+
+export interface MissaoCapturada {
+  id: string
+  instancia: string | null
+  grupo_nome: string | null
+  sender_nome: string | null
+  msg_id: string
+  ts: string | null
+  texto: string | null
+  links: MissaoCapturadaLink[]
+  status: MissaoCapturadaStatus
+  erro: string | null
+  gerado: MissaoGerada[] | null
+  created_at: string
+  updated_at: string
+}
+
+export interface MissaoResumo {
+  id: string
+  titulo: string
+  data: string | null
+  link: string | null
+  link_encurtado: string | null
+  curtidas_antes: number | null
+  comentarios_antes: number | null
+  curtidas_depois: number | null
+  comentarios_depois: number | null
+  cliques: number | null
+  metricas_evolucao: { hora: number; curtidas: number | null; comentarios: number | null }[] | null
+}

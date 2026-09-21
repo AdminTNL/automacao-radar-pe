@@ -1139,6 +1139,158 @@ end;
 $$;
 
 -- ---------------------------------------------------------------------------
+-- 12. Missões — captura de links do Eryck no grupo de coordenação (aba "Missões")
+-- ---------------------------------------------------------------------------
+-- O vigia (n8n) lê as mensagens de um remetente num grupo da Evolution e grava
+-- aqui as candidatas (1 linha por mensagem). O time "Gera" no front: encurta o
+-- link, cria a missão em central_engajamento.missoes e devolve o texto pronto
+-- pra copiar e mandar de volta no grupo. A geração em si roda no n8n.
+
+-- Fontes monitoradas (grupo + remetente). Parametriza a captação: trocar de
+-- instância/grupo é editar uma linha, sem mexer no workflow do n8n. Quando a
+-- CENTRAL DE ENGAJAMENTO entrar no grupo, basta acrescentar/ativar a linha dela
+-- (o checkpoint por fonte evita re-scan quando a fonte muda).
+create table if not exists radar_pe_mission_sources (
+  id           uuid primary key default gen_random_uuid(),
+  instancia    text not null,                 -- nome exato da sessão na Evolution
+  grupo_jid    text not null,                 -- ex.: 120363419370724813@g.us
+  grupo_nome   text,
+  sender_jid   text,                          -- número do remetente alvo (@s.whatsapp.net)
+  sender_lid   text,                          -- lid do remetente alvo (@lid), quando houver
+  sender_nome  text,
+  ativo        boolean not null default true,
+  checkpoint   timestamptz,                   -- timestamp da última msg já varrida
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now()
+);
+
+create unique index if not exists radar_pe_mission_sources_key
+  on radar_pe_mission_sources (instancia, grupo_jid, coalesce(sender_jid, ''));
+
+-- Candidatas capturadas: 1 linha por mensagem do remetente com link(s).
+--   links  = [{url, short_url, shortcode, kind}]  — links resolvidos da mensagem
+--   gerado = [{slug, link_encurtado, url}]        — o que foi criado em missoes
+create table if not exists radar_pe_missoes_capturadas (
+  id           uuid primary key default gen_random_uuid(),
+  source_id    uuid references radar_pe_mission_sources(id) on delete set null,
+  instancia    text,
+  grupo_jid    text,
+  grupo_nome   text,
+  sender_jid   text,
+  sender_nome  text,
+  msg_id       text not null unique,          -- idempotência da captura
+  ts           timestamptz,
+  texto        text,                          -- mensagem original (pra copiar de volta)
+  links        jsonb not null default '[]'::jsonb,
+  status       text not null default 'nova',  -- nova | gerando | gerada | descartada | erro
+  erro         text,
+  gerado       jsonb,
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now()
+);
+
+create index if not exists radar_pe_missoes_capturadas_status_idx on radar_pe_missoes_capturadas (status);
+create index if not exists radar_pe_missoes_capturadas_ts_idx on radar_pe_missoes_capturadas (ts desc);
+
+-- Upsert idempotente da captura (msg_id único): reexecução não duplica.
+create or replace function radar_pe_upsert_missao_capturada(
+  p_source_id   uuid,
+  p_instancia   text,
+  p_grupo_jid   text,
+  p_grupo_nome  text,
+  p_sender_jid  text,
+  p_sender_nome text,
+  p_msg_id      text,
+  p_ts          timestamptz,
+  p_texto       text,
+  p_links       jsonb
+) returns jsonb
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  v_id    uuid;
+  v_new   boolean := false;
+begin
+  perform set_config('radar_pe.is_auto', 'on', true);
+
+  select id into v_id from radar_pe_missoes_capturadas where msg_id = p_msg_id;
+
+  if v_id is null then
+    insert into radar_pe_missoes_capturadas
+      (source_id, instancia, grupo_jid, grupo_nome, sender_jid, sender_nome,
+       msg_id, ts, texto, links)
+    values
+      (p_source_id, p_instancia, p_grupo_jid, p_grupo_nome, p_sender_jid, p_sender_nome,
+       p_msg_id, p_ts, p_texto, coalesce(p_links, '[]'::jsonb))
+    on conflict (msg_id) do nothing
+    returning id into v_id;
+    v_new := v_id is not null;
+  end if;
+
+  if v_id is null then
+    select id into v_id from radar_pe_missoes_capturadas where msg_id = p_msg_id;
+  else
+    update radar_pe_missoes_capturadas
+       set texto = p_texto, links = coalesce(p_links, '[]'::jsonb),
+           ts = p_ts, updated_at = now()
+     where id = v_id and not v_new;
+  end if;
+
+  return jsonb_build_object('id', v_id, 'is_new', v_new);
+end;
+$$;
+
+-- Marca o resultado da geração (slugs/links criados) e fecha a candidata.
+create or replace function radar_pe_mark_missao_capturada_gerada(
+  p_id     uuid,
+  p_gerado jsonb
+) returns void
+language plpgsql
+security invoker
+set search_path = public
+as $$
+begin
+  perform set_config('radar_pe.is_auto', 'on', true);
+
+  update radar_pe_missoes_capturadas
+     set status = 'gerada', gerado = p_gerado, erro = null, updated_at = now()
+   where id = p_id;
+end;
+$$;
+
+-- Atualiza status/erro (gerando | erro | descartada | nova) — usado no retry.
+create or replace function radar_pe_set_missao_capturada_status(
+  p_id     uuid,
+  p_status text,
+  p_erro   text default null
+) returns void
+language plpgsql
+security invoker
+set search_path = public
+as $$
+begin
+  perform set_config('radar_pe.is_auto', 'on', true);
+
+  update radar_pe_missoes_capturadas
+     set status = p_status, erro = p_erro, updated_at = now()
+   where id = p_id;
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Seed da fonte de missões (grupo de coordenação PE — Eryck).
+-- Ajuste/ative outras fontes (ex.: CENTRAL DE ENGAJAMENTO) quando entrarem.
+-- ---------------------------------------------------------------------------
+insert into radar_pe_mission_sources
+  (instancia, grupo_jid, grupo_nome, sender_jid, sender_lid, sender_nome, ativo)
+values
+  ('Mobiliza 02 - Tonhão', '120363419370724813@g.us', '[coord] Mobiliza PE',
+   '558195136006@s.whatsapp.net', '145779880628365@lid', 'Eryck Gomes', true)
+on conflict do nothing;
+
+-- ---------------------------------------------------------------------------
 -- Seed de exemplo (ajuste com as ~50 sessões reais; só name + category)
 -- ---------------------------------------------------------------------------
 -- insert into radar_pe_instances (name, category) values
