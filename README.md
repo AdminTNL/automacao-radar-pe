@@ -38,6 +38,7 @@ Evolution (Postgres, cred "admin evo")  ──►  n8n  ──►  Supabase (rad
 | `n8n/10_reenviar_audio.json` | Sub: webhook → reenvia um áudio com erro pro Drive (chamado pelo Worker `/api/audio/resend`) |
 | `n8n/11_notion_list.json` | Sub: webhook → consulta o database "Radar Mobiliza PE" no Notion e devolve as páginas (usado pela aba "Radar Mobiliza PE") |
 | `n8n/12_notion_list_users.json` | Sub: webhook → lista os usuários do workspace do Notion (usado no vínculo de responsáveis no front) |
+| `n8n/13_vigia_missoes.json` | Vigia: captura links de missão de um remetente num grupo da Evolution (aba "Missões") |
 | `queries_validacao.md` | Queries pra conferir o resultado do backfill |
 | `arquitetura.md` | Desenho técnico (estado atual + Etapas 2b/3) pra alinhamento com o time |
 | `front/` | CRM básico (Vite + React + TS) pra ver/editar `radar_pe_contacts` |
@@ -183,6 +184,9 @@ wrangler secret put N8N_NOTION_LIST_WEBHOOK_URL  # URL do webhook "11 - Notion L
 wrangler secret put N8N_NOTION_USERS_WEBHOOK_URL  # URL do webhook "12 - Notion List Users"
 wrangler secret put N8N_AUDIO_RESEND_WEBHOOK_URL     # URL do webhook "10 - Reenviar Áudio"
 wrangler secret put N8N_AUDIO_RESEND_WEBHOOK_SECRET  # mesmo segredo configurado no Code do 10
+wrangler secret put N8N_ANALISE_WEBHOOK_URL          # https://webhookn8n.tnledu.shop/webhook/analise-missao-csv
+wrangler secret put N8N_ANALISE_WEBHOOK_SECRET       # mesmo secret do staticData do fluxo de análise
+wrangler secret put ANALISES_BUCKET                  # bucket privado de XLSX de análise (ex.: analises-missoes)
 wrangler deploy
 ```
 
@@ -262,6 +266,42 @@ on conflict (emoji) do nothing;
 ```
 
 > A Evolution devolve o áudio em base64 (o `To Binary` lê `base64` no topo ou em `media.base64`, e remove o prefixo `data:...;base64,`). Contatos `@lid` sem número podem não localizar a mídia — nesses casos o log fica como `erro` em `radar_pe_audio_saves`, e o time pode **Reenviar** pela aba do front.
+
+## Missões (captura do grupo de coordenação)
+
+A aba **"Missões"** do front mostra os links de missão que um remetente (ex.: Eryck) posta num grupo de coordenação. O fluxo `13 - Vigia Missões PE` lê o Postgres da Evolution a cada minuto, resolve o link (Instagram direto ou encurtador `engaja.pro`) e grava a candidata em `radar_pe_missoes_capturadas`. No front, o operador clica **Gerar**: o Worker (`POST /api/missoes/gerar`) encurta o link em `engaja.pro`, cria a missão em `central_engajamento.missoes` (sem Notion), dispara a evolução de métricas e devolve o texto pronto para **copiar** e mandar de volta no grupo.
+
+- **Fontes monitoradas** ficam em `radar_pe_mission_sources` (instância, grupo, remetente, checkpoint). Trocar de instância/grupo é editar a linha — o vigia lê a config da tabela, não hardcoded.
+- **Idempotência**: captura por `msg_id` (`unique`); geração por `link`/`titulo` (não duplica missão do mesmo post).
+- **Status da candidata**: `nova → gerada` (ou `descartada`/`erro`). Candidatas com erro podem ser tentadas de novo.
+- **Métricas**: o drawer da captura lê `central_engajamento.missoes` (`metricas_evolucao`/`cliques`) — por isso o proxy do Worker repassa `Accept-Profile`/`Content-Profile`.
+
+### Missões geradas + Análise
+
+Abaixo das capturas, a mesma aba lista as **missões geradas** (`central_engajamento.missoes`, projeto PE, `ativa=true`): criado em, título, link encurtado, cliques, status (Analisada/Pendente) e o botão **Analisar**. O Analisar abre um dialog que recebe o **XLSX do ExportComments** e dispara o fluxo de análise do n8n:
+
+```
+Front (dialog) → POST /api/missoes/analisar (Worker)
+  → upload no Supabase Storage (bucket privado `analises-missoes`) + URL assinada (1h)
+  → POST webhook n8n /analise-missao-csv  { titulo_missao, base_codigo, xlsx_url }
+  → fluxo "[Transição] Análise de Engajamento" (GPuP5fmLlAZhHOp5)
+     Mapeamento (CSV) → Checa Missão → ... → XLSX→JSON → cruzamento → upsert missão + Notion
+```
+
+O ponto de entrada é um **webhook novo no mesmo fluxo de análise** (`POST /analise-missao-csv`, autenticado por `x-radar-secret`). O node `Mapeamento Tally1` foi trocado por um Code que aceita **Tally** (comportamento original preservado) **ou** o payload do CSV. A planilha de mobilizadores é fixa (PE) e o arquivo é **XLSX** (o nó de parse espera XLSX com cabeçalho na linha 6).
+
+### Setup
+
+1. Rodar a seção **"12. Missões"** do `schema.sql` no Supabase (cria `radar_pe_mission_sources`, `radar_pe_missoes_capturadas` e as RPCs; já semeia a fonte do grupo `[coord] Mobiliza PE`).
+2. Importar o `n8n/13_vigia_missoes.json` e, no **staticData** do workflow, preencher `vinculoToken` (Bearer do `vinculo.pro`, mesmo token usado no fluxo "Vigia Jamilly"). Ativar.
+3. No Worker, definir os secrets:
+   - `VINCULO_TOKEN` (token do `vinculo.pro`).
+   - `N8N_ANALISE_WEBHOOK_URL` = `https://webhookn8n.tnledu.shop/webhook/analise-missao-csv`.
+   - `N8N_ANALISE_WEBHOOK_SECRET` (mesmo `secret` no staticData do fluxo de análise).
+   - `ANALISES_BUCKET` = `analises-missoes`.
+4. Criar o bucket **privado** `analises-missoes` no Supabase Storage.
+
+> O vigia depende de uma sessão Evolution que esteja no grupo (hoje `Mobiliza 02 - Tonhão`). Quando a `CENTRAL DE ENGAJAMENTO` entrar no grupo, basta acrescentar/ativar a fonte dela em `radar_pe_mission_sources`.
 
 ## Roadmap
 

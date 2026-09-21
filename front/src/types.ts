@@ -145,3 +145,62 @@ export interface NotionRadarRow {
   devolutiva: string
   outros?: { key: string; value: string }[]
 }
+
+export interface MissaoCapturadaLink {
+  url: string
+  short_url?: string
+  shortcode?: string
+  kind?: string
+  orig_url?: string
+}
+
+export type MissaoCapturadaStatus = 'nova' | 'gerando' | 'gerada' | 'descartada' | 'erro'
+
+export interface MissaoGerada {
+  slug: string
+  url: string
+  orig_url: string
+  link_encurtado: string
+  missao_id: string
+}
+
+export interface MissaoCapturada {
+  id: string
+  instancia: string | null
+  grupo_nome: string | null
+  sender_nome: string | null
+  msg_id: string
+  ts: string | null
+  texto: string | null
+  links: MissaoCapturadaLink[]
+  status: MissaoCapturadaStatus
+  erro: string | null
+  gerado: MissaoGerada[] | null
+  created_at: string
+  updated_at: string
+}
+
+export interface MissaoResumo {
+  id: string
+  titulo: string
+  data: string | null
+  link: string | null
+  link_encurtado: string | null
+  cliques: number | null
+  comentarios_base_total: number | null
+  analise_feita: boolean | null
+  metricas_evolucao: { hora: number; curtidas: number | null; comentarios: number | null }[] | null
+}
+
+export interface MissaoTabela {
+  id: string
+  titulo: string
+  data: string | null
+  link: string | null
+  link_encurtado: string | null
+  cliques: number | null
+  analise_feita: boolean | null
+  created_at: string
+}
+
+export type ComentarioRow = Record<string, string>
