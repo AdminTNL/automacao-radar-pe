@@ -186,10 +186,8 @@ export interface MissaoResumo {
   data: string | null
   link: string | null
   link_encurtado: string | null
-  curtidas_antes: number | null
-  comentarios_antes: number | null
-  curtidas_depois: number | null
-  comentarios_depois: number | null
   cliques: number | null
+  comentarios_base_total: number | null
+  analise_feita: boolean | null
   metricas_evolucao: { hora: number; curtidas: number | null; comentarios: number | null }[] | null
 }

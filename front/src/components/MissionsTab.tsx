@@ -118,14 +118,16 @@ export default function MissionsTab({ offline }: MissionsTabProps) {
       <div className="missao-metricas">
         {g.map((link) => {
           const m = missaoBySlug.get(link.slug)
-          const ultima = m?.metricas_evolucao?.[m.metricas_evolucao.length - 1]
-          const curtidas = m?.curtidas_depois ?? ultima?.curtidas ?? m?.curtidas_antes ?? null
-          const comentarios = m?.comentarios_depois ?? ultima?.comentarios ?? m?.comentarios_antes ?? null
+          const evolucao = m?.metricas_evolucao ?? []
+          const ultima = evolucao.length ? evolucao[evolucao.length - 1] : null
+          const curtidas = ultima?.curtidas ?? null
+          const comentarios = ultima?.comentarios ?? null
           return (
             <div key={link.slug} className="missao-metrica-row">
               <span className="muted">{link.slug}</span>
               <span>♥ {curtidas ?? '—'}</span>
               <span>💬 {comentarios ?? '—'}</span>
+              {m?.cliques != null && <span>🔗 {m.cliques}</span>}
             </div>
           )
         })}

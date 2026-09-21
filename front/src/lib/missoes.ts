@@ -18,7 +18,7 @@ export async function listMissoesRecentes(): Promise<MissaoResumo[]> {
     .schema(MISSOES_SCHEMA)
     .from('missoes')
     .select(
-      'id,titulo,data,link,link_encurtado,curtidas_antes,comentarios_antes,curtidas_depois,comentarios_depois,cliques,metricas_evolucao',
+      'id,titulo,data,link,link_encurtado,cliques,comentarios_base_total,analise_feita,metricas_evolucao',
     )
     .order('data', { ascending: false })
     .limit(60)
