@@ -1281,12 +1281,12 @@ $$;
 
 -- ---------------------------------------------------------------------------
 -- Seed da fonte de missões (grupo de coordenação PE — Eryck).
--- Ajuste/ative outras fontes (ex.: CENTRAL DE ENGAJAMENTO) quando entrarem.
+-- Fonte definitiva: CENTRAL DE ENGAJAMENTO. Acrescente/ative outras quando fizer sentido.
 -- ---------------------------------------------------------------------------
 insert into radar_pe_mission_sources
   (instancia, grupo_jid, grupo_nome, sender_jid, sender_lid, sender_nome, ativo)
 values
-  ('Mobiliza 02 - Tonhão', '120363419370724813@g.us', '[coord] Mobiliza PE',
+  ('CENTRAL DE ENGAJAMENTO', '120363419370724813@g.us', '[coord] Mobiliza PE',
    '558195136006@s.whatsapp.net', '145779880628365@lid', 'Eryck Gomes', true)
 on conflict do nothing;
 
