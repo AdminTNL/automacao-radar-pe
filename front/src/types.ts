@@ -202,3 +202,5 @@ export interface MissaoTabela {
   analise_feita: boolean | null
   created_at: string
 }
+
+export type ComentarioRow = Record<string, string>

@@ -477,6 +477,16 @@ function recifeDate(): { y: string; m: string; d: string } {
   return { y, m, d }
 }
 
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function trocarLink(texto: string, orig: string, short: string): string {
+  if (!orig || !short) return texto
+  const re = new RegExp(escapeRegExp(orig) + '(?:[/?#][^\\s]*)?', 'g')
+  return texto.replace(re, short)
+}
+
 async function handleGerarMissao(request: Request, env: Env): Promise<Response> {
   let body: { capturada_id?: unknown; central?: unknown }
   try {
@@ -551,7 +561,7 @@ async function handleGerarMissao(request: Request, env: Env): Promise<Response> 
 
     let mensagem = cap.texto ?? ''
     for (const g of gerado) {
-      if (g.orig_url && g.link_encurtado) mensagem = mensagem.split(g.orig_url).join(g.link_encurtado)
+      if (g.orig_url && g.link_encurtado) mensagem = trocarLink(mensagem, g.orig_url, g.link_encurtado)
     }
 
     for (const g of gerado) {
@@ -637,6 +647,20 @@ async function handleAnalisarMissao(request: Request, env: Env): Promise<Respons
   if (!(file instanceof File)) return json({ error: 'arquivo ausente' }, 400)
 
   try {
+    const missaoRows = await sbSelect<{ id: string; created_at: string | null }>(
+      env,
+      'missoes',
+      `select=id,created_at&titulo=eq.${encodeURIComponent(titulo)}&limit=1`,
+      'central_engajamento',
+    )
+    const rawCreated = missaoRows[0]?.created_at ?? ''
+    const criado = rawCreated
+      ? Date.parse(/[zZ]$|[+-]\d{2}:?\d{2}$/.test(rawCreated) ? rawCreated : `${rawCreated}Z`)
+      : NaN
+    if (!Number.isNaN(criado) && Date.now() < criado + 24 * 60 * 60 * 1000) {
+      return json({ error: 'A análise fica disponível 24h após o lançamento da missão.' }, 400)
+    }
+
     const bucket = env.ANALISES_BUCKET || 'analises-missoes'
     const path = `${base.toLowerCase()}/${titulo}-${Date.now()}.xlsx`
     const xlsxUrl = await uploadAnalise(env, bucket, path, file)

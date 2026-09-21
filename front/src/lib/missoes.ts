@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { MissaoCapturada, MissaoGerada, MissaoResumo, MissaoTabela } from '../types'
+import type { ComentarioRow, MissaoCapturada, MissaoGerada, MissaoResumo, MissaoTabela } from '../types'
 
 const MISSOES_SCHEMA = 'central_engajamento'
 
@@ -83,4 +83,17 @@ export async function analisarMissao(tituloMissao: string, file: File): Promise<
   const res = await fetch('/api/missoes/analisar', { method: 'POST', body: fd })
   const data = (await res.json().catch(() => ({}))) as { error?: string }
   if (!res.ok) throw new Error(data.error ?? 'Falha ao enviar a análise')
+}
+
+export async function getComentariosRaw(missaoId: string): Promise<ComentarioRow[] | null> {
+  const { data, error } = await supabase
+    .schema(MISSOES_SCHEMA)
+    .from('missoes')
+    .select('comentarios_raw')
+    .eq('id', missaoId)
+    .single()
+  if (error) throw new Error(error.message)
+  const raw = (data as { comentarios_raw?: unknown } | null)?.comentarios_raw
+  if (!Array.isArray(raw)) return null
+  return raw as ComentarioRow[]
 }

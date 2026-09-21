@@ -113,7 +113,7 @@ export default function App() {
 
   useAutoRefresh(() => {
     void checkNewMissoes()
-  }, 60000)
+  }, 10000)
 
   const openTab = (tab: Tab) => {
     if (tab === 'casos') setNewCasesCount(0)
