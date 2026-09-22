@@ -4,9 +4,10 @@ import { useAutoRefresh } from '../lib/useAutoRefresh'
 import { errorMessage, isOfflineError } from '../lib/errors'
 import { sendEncaminhamento } from '../lib/notion'
 import { useClosing } from '../lib/useClosing'
-import { fmtDate, isEmpty } from '../lib/format'
+import { fmtDate } from '../lib/format'
 import { caseMessages } from '../lib/transcript'
-import MessageList from './MessageList'
+import { montarRecorte, freezePatch, type RecorteItem } from '../lib/recorte'
+import MessageList, { type MessageItem } from './MessageList'
 import type { Case, CasePhrase, CaseStatus, EncaminhamentoForm, Instance, Responsavel } from '../types'
 import EditableText from './EditableText'
 import EncaminhamentoFormModal from './EncaminhamentoForm'
@@ -36,6 +37,9 @@ export default function CasesTab({ instances, offline }: CasesTabProps) {
   const [statusFilter, setStatusFilter] = useState('pendente')
   const [hasMore, setHasMore] = useState(false)
   const [activeCase, setActiveCase] = useState<Case | null>(null)
+  const [recorte, setRecorte] = useState<RecorteItem[] | null>(null)
+  const [recorteLoading, setRecorteLoading] = useState(false)
+  const [recorteError, setRecorteError] = useState<string | null>(null)
   const [encaminhando, setEncaminhando] = useState<Case | null>(null)
   const [responsaveis, setResponsaveis] = useState<Responsavel[]>([])
   const [toast, setToast] = useState<string | null>(null)
@@ -81,6 +85,34 @@ export default function CasesTab({ instances, offline }: CasesTabProps) {
   useEffect(() => {
     void loadResponsaveis()
   }, [loadResponsaveis])
+
+  // Recorte de revisão: por pessoa (telefone), vivo enquanto pendente.
+  useEffect(() => {
+    if (!activeCase) {
+      setRecorte(null)
+      setRecorteError(null)
+      setRecorteLoading(false)
+      return
+    }
+    let done = false
+    setRecorte(null)
+    setRecorteError(null)
+    setRecorteLoading(true)
+    montarRecorte(activeCase)
+      .then((r) => {
+        if (!done) setRecorte(r)
+      })
+      .catch((e) => {
+        if (!done) setRecorteError(e instanceof Error ? e.message : String(e))
+      })
+      .finally(() => {
+        if (!done) setRecorteLoading(false)
+      })
+    return () => {
+      done = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeCase?.id])
 
   const fetchFirstPage = useCallback(async () => {
     return supabase
@@ -182,14 +214,15 @@ export default function CasesTab({ instances, offline }: CasesTabProps) {
     })
   }, [cases, search, statusFilter])
 
-  const applyStatus = async (id: string, status: CaseStatus) => {
-    const { error } = await supabase.from('radar_pe_cases').update({ status }).eq('id', id)
+  const applyStatus = async (id: string, status: CaseStatus, congelar = false) => {
+    const patch = congelar ? { status, ...freezePatch(recorte) } : { status }
+    const { error } = await supabase.from('radar_pe_cases').update(patch).eq('id', id)
     if (error) {
       if (!isOfflineError(error)) setError(error.message)
       throw new Error(errorMessage(error))
     }
-    setCases((prev) => prev.map((c) => (c.id === id ? { ...c, status } : c)))
-    setActiveCase((cur) => (cur && cur.id === id ? { ...cur, status } : cur))
+    setCases((prev) => prev.map((c) => (c.id === id ? { ...c, ...patch } : c)))
+    setActiveCase((cur) => (cur && cur.id === id ? { ...cur, ...patch } : cur))
   }
 
   const openEncaminhamento = async (cas: Case) => {
@@ -209,6 +242,7 @@ export default function CasesTab({ instances, offline }: CasesTabProps) {
       notion_page_id: page_id,
       sent_at: now,
       encaminhamento: form,
+      ...freezePatch(recorte),
     }
     const { error } = await supabase.from('radar_pe_cases').update(patch).eq('id', cas.id)
     if (error) throw new Error(errorMessage(error))
@@ -405,8 +439,11 @@ export default function CasesTab({ instances, offline }: CasesTabProps) {
       {activeCase && (
         <CaseDrawer
           cas={activeCase}
+          recorte={recorte}
+          recorteLoading={recorteLoading}
+          recorteError={recorteError}
           onClose={() => setActiveCase(null)}
-          onSetStatus={(status) => applyStatus(activeCase.id, status)}
+          onSetStatus={(status) => applyStatus(activeCase.id, status, status !== 'pendente')}
           onApprove={() => openEncaminhamento(activeCase)}
         />
       )}
@@ -414,6 +451,7 @@ export default function CasesTab({ instances, offline }: CasesTabProps) {
       {encaminhando && (
         <EncaminhamentoFormModal
           cas={encaminhando}
+          recorte={recorte}
           responsavel={responsavelByInstance.get(encaminhando.instance_name ?? '') ?? ''}
           responsaveis={responsaveis}
           onClose={() => setEncaminhando(null)}
@@ -502,12 +540,23 @@ export default function CasesTab({ instances, offline }: CasesTabProps) {
 
 interface CaseDrawerProps {
   cas: Case
+  recorte: RecorteItem[] | null
+  recorteLoading: boolean
+  recorteError: string | null
   onClose: () => void
   onSetStatus: (status: CaseStatus) => Promise<void>
   onApprove: () => void
 }
 
-function CaseDrawer({ cas, onClose, onSetStatus, onApprove }: CaseDrawerProps) {
+function CaseDrawer({
+  cas,
+  recorte,
+  recorteLoading,
+  recorteError,
+  onClose,
+  onSetStatus,
+  onApprove,
+}: CaseDrawerProps) {
   const [saving, setSaving] = useState(false)
   const { closing, startClosing } = useClosing(onClose)
 
@@ -533,6 +582,20 @@ function CaseDrawer({ cas, onClose, onSetStatus, onApprove }: CaseDrawerProps) {
   }
 
   const name = cas.contact_name || cas.phone || cas.remote_jid || 'Contato'
+
+  const recorteItems: MessageItem[] = (recorte ?? []).map((r) => ({
+    from_me: r.from_me,
+    body: r.body,
+    ts: r.ts ?? undefined,
+    instanceName: r.instance_name,
+  }))
+  const fallbackItems: MessageItem[] = caseMessages(cas).map((m) => ({
+    from_me: m.from === 'me',
+    body: m.body,
+    ts: m.ts,
+  }))
+  const items = recorteItems.length > 0 ? recorteItems : fallbackItems
+  const sessions = new Set(items.map((m) => m.instanceName).filter(Boolean))
 
   return (
     <div className={`drawer-overlay${closing ? ' closing' : ''}`} onClick={startClosing}>
@@ -561,17 +624,23 @@ function CaseDrawer({ cas, onClose, onSetStatus, onApprove }: CaseDrawerProps) {
         </header>
 
         <div className="drawer-body">
-          {isEmpty(cas.transcript_snapshot) && !cas.messages_snapshot?.length ? (
-            <div className="state">Sem trecho congelado para este caso.</div>
-          ) : (
-            <MessageList
-              messages={caseMessages(cas).map((m) => ({
-                from_me: m.from === 'me',
-                body: m.body,
-                ts: m.ts,
-              }))}
-            />
+          {recorteLoading && items.length === 0 && (
+            <div className="state">Carregando recorte…</div>
           )}
+          {!recorteLoading && items.length === 0 && (
+            <div className="state">Sem trecho para este caso.</div>
+          )}
+          {items.length > 0 && (
+            <>
+              {sessions.size > 1 && (
+                <div className="panel-note">
+                  Contexto de {sessions.size} sessões deste contato.
+                </div>
+              )}
+              <MessageList messages={items} />
+            </>
+          )}
+          {recorteError && <div className="error">Recorte: {recorteError}</div>}
         </div>
 
         <footer className="drawer-actions">

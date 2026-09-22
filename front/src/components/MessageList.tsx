@@ -2,6 +2,7 @@ export interface MessageItem {
   from_me: boolean
   body: string
   ts?: string
+  instanceName?: string | null
 }
 
 function isMedia(body: string): boolean {
@@ -39,10 +40,17 @@ function fmtTime(iso: string): string {
   return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
 }
 
-function Row({ m }: { m: MessageItem }) {
+interface LabeledItem extends MessageItem {
+  showInstance?: boolean
+}
+
+function Row({ m }: { m: LabeledItem }) {
   return (
     <div className={`msg ${m.from_me ? 'msg-me' : 'msg-contact'}`}>
       <div className="msg-stack">
+        {m.showInstance && m.instanceName && (
+          <div className="msg-session">{m.instanceName}</div>
+        )}
         <div
           className={`bubble ${m.from_me ? 'bubble-me' : 'bubble-contact'} ${
             isMedia(m.body) ? 'bubble-media' : ''
@@ -58,8 +66,13 @@ function Row({ m }: { m: MessageItem }) {
 
 // Render compartilhado de mensagens (drawer de contatos e de casos). Agrupa por
 // dia quando há timestamp; sem ts (fallback de transcript) renderiza em sequência.
+// Quando o recorte vem de várias sessões, marca a origem a cada troca de instância.
 export default function MessageList({ messages }: { messages: MessageItem[] }) {
-  const items = messages.filter((m) => !!m.body && m.body.trim() !== '')
+  const filtered = messages.filter((m) => !!m.body && m.body.trim() !== '')
+  const items: LabeledItem[] = filtered.map((m, i) => ({
+    ...m,
+    showInstance: !!m.instanceName && m.instanceName !== filtered[i - 1]?.instanceName,
+  }))
 
   if (!items.some((m) => !!m.ts)) {
     return (
@@ -71,7 +84,7 @@ export default function MessageList({ messages }: { messages: MessageItem[] }) {
     )
   }
 
-  const map = new Map<string, MessageItem[]>()
+  const map = new Map<string, LabeledItem[]>()
   for (const m of items) {
     const k = m.ts ? dayKey(m.ts) : 'invalid'
     if (!map.has(k)) map.set(k, [])

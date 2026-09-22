@@ -1050,6 +1050,16 @@ tbody tr:hover {
   padding: 0 4px;
 }
 
+.msg-session {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  text-transform: uppercase;
+  margin-bottom: 2px;
+  padding: 0 4px;
+}
+
 .day-sep {
   text-align: center;
   margin: 12px 0 8px;

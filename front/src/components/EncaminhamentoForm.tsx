@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { CIDADES_RADAR, cidadePorId } from '../lib/cidadesRadar'
 import { caseMessages } from '../lib/transcript'
+import type { RecorteItem } from '../lib/recorte'
 import { useClosing } from '../lib/useClosing'
 import type { Case, EncaminhamentoForm, Responsavel } from '../types'
 
@@ -23,9 +24,13 @@ const FONTES = [
   'Evento presencial',
 ]
 
-function contactLines(cas: Case): string {
-  return caseMessages(cas)
-    .filter((m) => m.from === 'contact')
+function contactLines(cas: Case, recorte: RecorteItem[] | null): string {
+  const items =
+    recorte && recorte.length > 0
+      ? recorte.map((r) => ({ from_me: r.from_me, body: r.body }))
+      : caseMessages(cas).map((m) => ({ from_me: m.from === 'me', body: m.body }))
+  return items
+    .filter((m) => !m.from_me)
     .map((m) => m.body)
     .join('\n')
 }
@@ -39,6 +44,7 @@ function todayISO(): string {
 
 interface EncaminhamentoFormProps {
   cas: Case
+  recorte: RecorteItem[] | null
   responsavel: string
   responsaveis: Responsavel[]
   onClose: () => void
@@ -47,6 +53,7 @@ interface EncaminhamentoFormProps {
 
 export default function EncaminhamentoForm({
   cas,
+  recorte,
   responsavel,
   responsaveis,
   onClose,
@@ -57,7 +64,7 @@ export default function EncaminhamentoForm({
   const responsavelInicial = responsaveis.some((r) => r.name === responsavel) ? responsavel : ''
   const [form, setForm] = useState<EncaminhamentoForm>(() => ({
     titulo: '',
-    o_que_disse: contactLines(cas),
+    o_que_disse: contactLines(cas, recorte),
     area: '',
     precisa_retorno: 'Não',
     responsavel: responsavelInicial,
