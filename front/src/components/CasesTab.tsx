@@ -5,6 +5,8 @@ import { errorMessage, isOfflineError } from '../lib/errors'
 import { sendEncaminhamento } from '../lib/notion'
 import { useClosing } from '../lib/useClosing'
 import { fmtDate, isEmpty } from '../lib/format'
+import { caseMessages } from '../lib/transcript'
+import MessageList from './MessageList'
 import type { Case, CasePhrase, CaseStatus, EncaminhamentoForm, Instance, Responsavel } from '../types'
 import EditableText from './EditableText'
 import EncaminhamentoFormModal from './EncaminhamentoForm'
@@ -559,26 +561,16 @@ function CaseDrawer({ cas, onClose, onSetStatus, onApprove }: CaseDrawerProps) {
         </header>
 
         <div className="drawer-body">
-          {isEmpty(cas.transcript_snapshot) ? (
+          {isEmpty(cas.transcript_snapshot) && !cas.messages_snapshot?.length ? (
             <div className="state">Sem trecho congelado para este caso.</div>
           ) : (
-            <div className="messages">
-              {cas.transcript_snapshot!.split('\n').map((line, i) => {
-                const fromMe = line.startsWith('Eu: ')
-                const text = fromMe ? line.slice(4) : line.replace(/^Contato: /, '')
-                return (
-                  <div key={i} className={`msg ${fromMe ? 'msg-me' : 'msg-contact'}`}>
-                    <div className="msg-stack">
-                      <div
-                        className={`bubble ${fromMe ? 'bubble-me' : 'bubble-contact'}`}
-                      >
-                        {text}
-                      </div>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
+            <MessageList
+              messages={caseMessages(cas).map((m) => ({
+                from_me: m.from === 'me',
+                body: m.body,
+                ts: m.ts,
+              }))}
+            />
           )}
         </div>
 

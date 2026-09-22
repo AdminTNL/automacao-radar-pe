@@ -79,6 +79,7 @@ export interface Case {
   fragment_start_at: string | null
   fragment_end_at: string | null
   transcript_snapshot: string | null
+  messages_snapshot: Message[] | null
   temperatura_snapshot: string | null
   status: CaseStatus
   sent_to_radar: boolean

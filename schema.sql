@@ -222,6 +222,7 @@ create table if not exists radar_pe_cases (
   fragment_start_at    timestamptz,
   fragment_end_at      timestamptz,
   transcript_snapshot  text,                    -- trecho congelado (até N anteriores + gatilho)
+  messages_snapshot    jsonb,                   -- mesmo trecho, estruturado [{ts, from_me, body, msg_id}]
   temperatura_snapshot text,                    -- temperatura_sugerida no momento
   status               text not null default 'pendente'
                        check (status in ('pendente','aprovado','descartado','enviado')),
@@ -240,6 +241,8 @@ create index if not exists radar_pe_cases_created_idx on radar_pe_cases (created
 
 -- Migração p/ bancos onde a tabela já existia antes da Etapa 3.
 alter table radar_pe_cases add column if not exists encaminhamento jsonb;
+-- Migração: snapshot estruturado do trecho (Trilha B — substitui o parsing de texto no front).
+alter table radar_pe_cases add column if not exists messages_snapshot jsonb;
 
 -- Toque humano em updated_at: só quando o time aprova/descarta/envia (não a detecção).
 create or replace function radar_pe_cases_touch()
@@ -472,7 +475,7 @@ security invoker
 set search_path = public
 as $$
 declare
-  v_context_size integer := 10;  -- nº de mensagens anteriores ao gatilho congeladas
+  v_context_size integer := 25;  -- nº de mensagens anteriores ao gatilho congeladas
   v_chat    radar_pe_chats%rowtype;
   v_contact radar_pe_contacts%rowtype;
   v_msgs    jsonb;
@@ -484,6 +487,7 @@ declare
   v_ts_start timestamptz;
   v_ts_end   timestamptz;
   v_snapshot text;
+  v_snapshot_json jsonb;
 begin
   perform set_config('radar_pe.is_auto', 'on', true);
 
@@ -538,16 +542,28 @@ begin
     where ord >= v_from_idx + 1 and ord <= v_idx + 1
       and (m->>'body') is not null and (m->>'body') <> '';
 
+    -- mesmo trecho em JSON estruturado (o front renderiza daqui; o texto vira fallback)
+    select jsonb_agg(
+      jsonb_build_object(
+        'ts', m->>'ts', 'from_me', (m->>'from_me')::boolean,
+        'body', m->>'body', 'msg_id', m->>'msg_id')
+      order by ord
+    )
+      into v_snapshot_json
+    from jsonb_array_elements(v_msgs) with ordinality as t(m, ord)
+    where ord >= v_from_idx + 1 and ord <= v_idx + 1
+      and (m->>'body') is not null and (m->>'body') <> '';
+
     insert into radar_pe_cases
       (chat_id, contact_id, instance_name, remote_jid, contact_name, phone,
        trigger_msg_id, matched_phrase, fragment_start_at, fragment_end_at,
-       transcript_snapshot, temperatura_snapshot)
+       transcript_snapshot, messages_snapshot, temperatura_snapshot)
     values
       (v_chat.id, v_contact.id, v_chat.instance_name, v_chat.remote_jid,
        coalesce(v_contact.contact_name, v_chat.contact_name),
        coalesce(v_contact.phone, v_chat.phone),
        v_trigger->>'msg_id', v_phrase, v_ts_start, v_ts_end,
-       v_snapshot, v_contact.temperatura_sugerida)
+       v_snapshot, v_snapshot_json, v_contact.temperatura_sugerida)
     on conflict (chat_id, trigger_msg_id) do nothing;
   end loop;
 
@@ -823,6 +839,48 @@ begin
     perform radar_pe_detect_cases_for_chat(r.id);
     v_count := v_count + 1;
   end loop;
+
+  return v_count;
+end;
+$$;
+
+-- Backfill do snapshot estruturado (Trilha B) para casos criados antes da coluna
+-- messages_snapshot. Reconstrói a partir de radar_pe_chats.messages, recortando o
+-- intervalo congelado [fragment_start_at, fragment_end_at]. Idempotente (só onde
+-- messages_snapshot is null) e não-destrutivo. Casos cujo chat não tem messages
+-- (ou sem fragment) ficam null e o front cai no fallback de texto. Retorna quantos
+-- casos preencheu.
+create or replace function radar_pe_backfill_case_messages()
+returns integer
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  v_count integer;
+begin
+  with upd as (
+    update radar_pe_cases c
+       set messages_snapshot = (
+         select jsonb_agg(
+                  jsonb_build_object(
+                    'ts', m->>'ts', 'from_me', (m->>'from_me')::boolean,
+                    'body', m->>'body', 'msg_id', m->>'msg_id')
+                  order by ord)
+         from radar_pe_chats ch
+         cross join lateral jsonb_array_elements(ch.messages) with ordinality as t(m, ord)
+         where ch.id = c.chat_id
+           and (m->>'ts')::timestamptz between c.fragment_start_at and c.fragment_end_at
+           and (m->>'body') is not null and (m->>'body') <> ''
+       )
+     where c.messages_snapshot is null
+       and c.fragment_start_at is not null and c.fragment_end_at is not null
+       and exists (
+         select 1 from radar_pe_chats ch
+         where ch.id = c.chat_id and ch.messages is not null)
+    returning 1
+  )
+  select count(*) into v_count from upd;
 
   return v_count;
 end;

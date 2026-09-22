@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { CIDADES_RADAR, cidadePorId } from '../lib/cidadesRadar'
+import { caseMessages } from '../lib/transcript'
 import { useClosing } from '../lib/useClosing'
 import type { Case, EncaminhamentoForm, Responsavel } from '../types'
 
@@ -22,13 +23,11 @@ const FONTES = [
   'Evento presencial',
 ]
 
-function contactLines(snapshot: string | null): string {
-  if (!snapshot) return ''
-  const lines = snapshot
-    .split('\n')
-    .filter((l) => l.startsWith('Contato: '))
-    .map((l) => l.slice('Contato: '.length))
-  return lines.length > 0 ? lines.join('\n') : snapshot
+function contactLines(cas: Case): string {
+  return caseMessages(cas)
+    .filter((m) => m.from === 'contact')
+    .map((m) => m.body)
+    .join('\n')
 }
 
 function todayISO(): string {
@@ -58,7 +57,7 @@ export default function EncaminhamentoForm({
   const responsavelInicial = responsaveis.some((r) => r.name === responsavel) ? responsavel : ''
   const [form, setForm] = useState<EncaminhamentoForm>(() => ({
     titulo: '',
-    o_que_disse: contactLines(cas.transcript_snapshot),
+    o_que_disse: contactLines(cas),
     area: '',
     precisa_retorno: 'Não',
     responsavel: responsavelInicial,
