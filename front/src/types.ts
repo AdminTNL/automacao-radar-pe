@@ -3,6 +3,8 @@ export interface Message {
   from_me: boolean
   body: string | null
   msg_id: string | null
+  instance_name?: string | null
+  chat_id?: string | null
 }
 
 export interface Instance {
