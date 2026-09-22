@@ -113,7 +113,7 @@ Evolution (Postgres, cred "admin evo")  ──►  n8n  ──►  Supabase (rad
 - **`radar_pe_chats`** — um por contato/conversa (`instance_name`, `remote_jid`, `contact_name`, `transcript`, `checkpoint`, ...). Único por `(instance_name, remote_jid)`.
 - **`radar_pe_contacts`** — registro de negócio ("todos os contatos"), com os campos da Botando pra Moer.
 - **`radar_pe_case_phrases`** — frases-gatilho do critério (1ª passagem), editável via SQL.
-- **`radar_pe_cases`** — possíveis casos de Radar (1 contato → N casos): fragmento congelado + aprovação do time.
+- **`radar_pe_cases`** — possíveis casos de Radar (1 contato → N casos): fragmento congelado (texto + `messages_snapshot` JSON) + aprovação do time.
 - **`radar_pe_audio_triggers`** — combinações de emoji que disparam o salvamento de áudio, editável via SQL (seed: `🎙️📁`).
 - **`radar_pe_audio_saves`** — auditoria dos áudios salvos no Drive (`pendente`/`salvo`/`erro`), idempotente por `(chat_id, trigger_msg_id)`.
 
