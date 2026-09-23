@@ -11,6 +11,8 @@ import MessageList, { type MessageItem } from './MessageList'
 import type { Case, CasePhrase, CaseStatus, EncaminhamentoForm, Instance, Responsavel } from '../types'
 import EditableText from './EditableText'
 import EncaminhamentoFormModal from './EncaminhamentoForm'
+import FilterDialog from './FilterDialog'
+import FilterButton from './FilterButton'
 
 const PAGE_SIZE = 500
 
@@ -35,6 +37,7 @@ export default function CasesTab({ instances, offline }: CasesTabProps) {
   const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('pendente')
+  const [filterOpen, setFilterOpen] = useState(false)
   const [hasMore, setHasMore] = useState(false)
   const [activeCase, setActiveCase] = useState<Case | null>(null)
   const [recorte, setRecorte] = useState<RecorteItem[] | null>(null)
@@ -337,6 +340,17 @@ export default function CasesTab({ instances, offline }: CasesTabProps) {
     setPhrases((prev) => prev.filter((p) => p.id !== id))
   }
 
+  const activeFilterCount = statusFilter !== 'pendente' ? 1 : 0
+
+  const filterSelects = (
+    <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+      <option value="">Todos os status</option>
+      <option value="pendente">Pendentes</option>
+      <option value="descartado">Descartados</option>
+      <option value="enviado">Enviados</option>
+    </select>
+  )
+
   return (
     <>
       <div className="filters">
@@ -347,16 +361,32 @@ export default function CasesTab({ instances, offline }: CasesTabProps) {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-          <option value="">Todos os status</option>
-          <option value="pendente">Pendentes</option>
-          <option value="descartado">Descartados</option>
-          <option value="enviado">Enviados</option>
-        </select>
-        <button type="button" className="refresh" onClick={() => void openPhrases()}>
-          Frases-gatilho
+        <div className="filters-desktop">{filterSelects}</div>
+        <FilterButton activeCount={activeFilterCount} onClick={() => setFilterOpen(true)} />
+        <button type="button" className="action-btn" onClick={() => void openPhrases()}>
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M9 11l3 3L22 4" />
+            <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+          </svg>
+          <span className="btn-label">Frases-gatilho</span>
         </button>
       </div>
+
+      {filterOpen && (
+        <FilterDialog onClose={() => setFilterOpen(false)} onClear={() => setStatusFilter('pendente')}>
+          <div className="filter-fields">{filterSelects}</div>
+        </FilterDialog>
+      )}
 
       <div className="panel-note">
         Casos que o sistema identifica como candidatos ao Radar. Revise os pendentes, encaminhe os
@@ -384,19 +414,19 @@ export default function CasesTab({ instances, offline }: CasesTabProps) {
               <tbody>
                 {filtered.map((c) => (
                   <tr key={c.id} className="row-clickable" onClick={() => setActiveCase(c)}>
-                    <td>
+                    <td data-label="Contato">
                       {c.contact_name ?? c.phone ?? c.remote_jid ?? '—'}
                       {c.phone && c.contact_name && (
                         <span className="muted"> · {c.phone}</span>
                       )}
                     </td>
-                    <td className="muted">{c.instance_name ?? '—'}</td>
-                    <td>
+                    <td className="muted col-secondary" data-label="Sessão">{c.instance_name ?? '—'}</td>
+                    <td className="col-secondary" data-label="Categoria">
                       <span className="badge">{categoryByInstance.get(c.instance_name ?? '') ?? '—'}</span>
                     </td>
-                    <td>{c.matched_phrase ?? <span className="muted">—</span>}</td>
-                    <td>{c.temperatura_snapshot ?? <span className="muted">—</span>}</td>
-                    <td>
+                    <td data-label="Frase">{c.matched_phrase ?? <span className="muted">—</span>}</td>
+                    <td className="col-secondary" data-label="Temperatura">{c.temperatura_snapshot ?? <span className="muted">—</span>}</td>
+                    <td data-label="Status">
                       <select
                         value={c.status}
                         onClick={(e) => e.stopPropagation()}
@@ -413,7 +443,7 @@ export default function CasesTab({ instances, offline }: CasesTabProps) {
                         {c.status === 'enviado' && <option value="enviado">Enviado</option>}
                       </select>
                     </td>
-                    <td className="muted">{fmtDate(c.created_at)}</td>
+                    <td className="muted" data-label="Data">{fmtDate(c.created_at)}</td>
                   </tr>
                 ))}
                 {filtered.length === 0 && (

@@ -105,11 +105,28 @@ export default function RadarTab({ offline }: RadarTabProps) {
         </span>
         <button
           type="button"
-          className="refresh"
+          className="action-btn"
           onClick={() => void load(true)}
           disabled={refreshing}
+          aria-busy={refreshing}
         >
-          {refreshing ? 'Atualizando…' : 'Atualizar'}
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M23 4v6h-6" />
+            <path d="M1 20v-6h6" />
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10" />
+            <path d="M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+          </svg>
+          <span className="btn-label">{refreshing ? 'Atualizando…' : 'Atualizar'}</span>
         </button>
       </div>
 
@@ -190,7 +207,7 @@ export default function RadarTab({ offline }: RadarTabProps) {
                       setActiveRow(r)
                     }}
                   >
-                    <td>
+                    <td data-label="Status">
                       {r.status ? (
                         <span
                           className="badge"
@@ -205,12 +222,12 @@ export default function RadarTab({ offline }: RadarTabProps) {
                         <span className="muted">—</span>
                       )}
                     </td>
-                    <td className="strong">{r.titulo || 'Sem título'}</td>
-                    <td className="muted">{r.telefone || '—'}</td>
-                    <td className="muted">{fmtData(r.data) || '—'}</td>
-                    <td>{r.sessao_responsavel || <span className="muted">—</span>}</td>
-                    <td>{r.responsavel || <span className="muted">—</span>}</td>
-                    <td>{r.urgencia || <span className="muted">—</span>}</td>
+                    <td className="strong" data-label="O que chegou">{r.titulo || 'Sem título'}</td>
+                    <td className="muted" data-label="Telefone">{r.telefone || '—'}</td>
+                    <td className="muted" data-label="Data">{fmtData(r.data) || '—'}</td>
+                    <td className="col-secondary" data-label="Sessão">{r.sessao_responsavel || <span className="muted">—</span>}</td>
+                    <td className="col-secondary" data-label="Responsável">{r.responsavel || <span className="muted">—</span>}</td>
+                    <td data-label="Urgência">{r.urgencia || <span className="muted">—</span>}</td>
                   </tr>
                 ))}
                 {filtered.length === 0 && (

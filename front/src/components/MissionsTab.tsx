@@ -13,6 +13,8 @@ import {
   setCapturadaStatus,
 } from '../lib/missoes'
 import type { ComentarioRow, MissaoCapturada, MissaoCapturadaStatus, MissaoResumo, MissaoTabela } from '../types'
+import FilterDialog from './FilterDialog'
+import FilterButton from './FilterButton'
 
 const STATUS_LABEL: Record<MissaoCapturadaStatus, string> = {
   nova: 'Nova',
@@ -77,6 +79,7 @@ export default function MissionsTab({ offline }: MissionsTabProps) {
   const [search, setSearch] = useState('')
   const [filtro, setFiltro] = useState('')
   const [statusFiltro, setStatusFiltro] = useState('')
+  const [filterOpen, setFilterOpen] = useState(false)
   const [gerandoId, setGerandoId] = useState<string | null>(null)
   const [active, setActive] = useState<MissaoCapturada | null>(null)
   const [analisando, setAnalisando] = useState<MissaoTabela | null>(null)
@@ -185,6 +188,27 @@ export default function MissionsTab({ offline }: MissionsTabProps) {
     }
   }
 
+  const activeFilterCount = (filtro ? 1 : 0) + (statusFiltro ? 1 : 0)
+
+  const filterSelects = (
+    <>
+      <select value={filtro} onChange={(e) => setFiltro(e.target.value)}>
+        <option value="">Todos</option>
+        <option value="capturas">Capturas</option>
+        <option value="pendentes">Missões pendentes</option>
+        <option value="analisadas">Analisadas</option>
+      </select>
+      <select value={statusFiltro} onChange={(e) => setStatusFiltro(e.target.value)}>
+        <option value="">Todos os status</option>
+        <option value="nova">Nova</option>
+        <option value="erro">Erro</option>
+        <option value="aguardando">Aguardando 24h</option>
+        <option value="pendente">Pendente</option>
+        <option value="analisada">Analisada</option>
+      </select>
+    </>
+  )
+
   return (
     <>
       <div className="filters">
@@ -195,24 +219,40 @@ export default function MissionsTab({ offline }: MissionsTabProps) {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        <select value={filtro} onChange={(e) => setFiltro(e.target.value)}>
-          <option value="">Todos</option>
-          <option value="capturas">Capturas</option>
-          <option value="pendentes">Missões pendentes</option>
-          <option value="analisadas">Analisadas</option>
-        </select>
-        <select value={statusFiltro} onChange={(e) => setStatusFiltro(e.target.value)}>
-          <option value="">Todos os status</option>
-          <option value="nova">Nova</option>
-          <option value="erro">Erro</option>
-          <option value="aguardando">Aguardando 24h</option>
-          <option value="pendente">Pendente</option>
-          <option value="analisada">Analisada</option>
-        </select>
-        <button type="button" className="refresh" onClick={() => void load(false)}>
-          Atualizar
+        <div className="filters-desktop">{filterSelects}</div>
+        <FilterButton activeCount={activeFilterCount} onClick={() => setFilterOpen(true)} />
+        <button type="button" className="action-btn" onClick={() => void load(false)}>
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M23 4v6h-6" />
+            <path d="M1 20v-6h6" />
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10" />
+            <path d="M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+          </svg>
+          <span className="btn-label">Atualizar</span>
         </button>
       </div>
+
+      {filterOpen && (
+        <FilterDialog
+          onClose={() => setFilterOpen(false)}
+          onClear={() => {
+            setFiltro('')
+            setStatusFiltro('')
+          }}
+        >
+          <div className="filter-fields">{filterSelects}</div>
+        </FilterDialog>
+      )}
 
       <div className="panel-note">
         Pipeline de missões: capturas do grupo (Gerar) e missões criadas (Analisar). Clique numa linha para
@@ -240,10 +280,10 @@ export default function MissionsTab({ offline }: MissionsTabProps) {
                   const c = l.cap
                   return (
                     <tr key={`c-${c.id}`} className="row-clickable" onClick={() => setActive(c)}>
-                      <td className="muted">{fmtDate(c.ts)}</td>
-                      <td>{c.sender_nome ?? c.instancia ?? '—'}</td>
-                      <td className="muted">—</td>
-                      <td>
+                      <td className="muted" data-label="Quando">{fmtDate(c.ts)}</td>
+                      <td className="col-secondary" data-label="Origem">{c.sender_nome ?? c.instancia ?? '—'}</td>
+                      <td className="muted col-secondary" data-label="Título">—</td>
+                      <td data-label="Link">
                         <div className="missao-links-cell">
                           {(c.links ?? []).map((lnk, i) => (
                             <span key={i} className="missao-link-text">
@@ -252,7 +292,7 @@ export default function MissionsTab({ offline }: MissionsTabProps) {
                           ))}
                         </div>
                       </td>
-                      <td>
+                      <td data-label="Status">
                         <span className={`badge badge-${c.status}`}>{STATUS_LABEL[c.status]}</span>
                         {c.erro && <div className="missao-erro">{c.erro}</div>}
                       </td>
@@ -267,11 +307,11 @@ export default function MissionsTab({ offline }: MissionsTabProps) {
                     className="row-clickable"
                     onClick={() => (m.analise_feita ? setMissaoAberta(m) : setAnalisando(m))}
                   >
-                    <td className="muted">{fmtDate(m.created_at)}</td>
-                    <td className="muted">—</td>
-                    <td>{m.titulo}</td>
-                    <td className="muted missao-link-text">{m.link_encurtado ?? '—'}</td>
-                    <td>
+                    <td className="muted" data-label="Quando">{fmtDate(m.created_at)}</td>
+                    <td className="muted col-secondary" data-label="Origem">—</td>
+                    <td data-label="Título">{m.titulo}</td>
+                    <td className="muted missao-link-text" data-label="Link">{m.link_encurtado ?? '—'}</td>
+                    <td data-label="Status">
                       <span
                         className={`badge ${
                           m.analise_feita ? 'badge-gerada' : bloqueado ? 'badge-nova' : 'badge-pendente'
@@ -744,7 +784,8 @@ function MissaoDrawer({ missao, onClose }: MissaoDrawerProps) {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
-              <table className="comentarios-table">
+              <div className="comentarios-scroll">
+                <table className="comentarios-table">
                 <thead>
                   <tr>
                     {colunas.map((c) => (
@@ -767,7 +808,8 @@ function MissaoDrawer({ missao, onClose }: MissaoDrawerProps) {
                     </tr>
                   ))}
                 </tbody>
-              </table>
+                </table>
+              </div>
               <div className="comentarios-footer muted">
                 {limite < filtrados.length
                   ? `Mostrando ${visiveis.length} de ${filtrados.length} — role para carregar mais`

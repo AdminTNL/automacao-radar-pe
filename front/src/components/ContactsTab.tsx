@@ -9,6 +9,8 @@ import EditableText from './EditableText'
 import EncaminhamentoSelect from './EncaminhamentoSelect'
 import { ENCAMINHAMENTO_OPTIONS } from '../lib/crmOptions'
 import PeriodPicker, { type Period } from './PeriodPicker'
+import FilterDialog from './FilterDialog'
+import FilterButton from './FilterButton'
 import { downloadCsv, toCsv } from '../lib/csv'
 
 const PAGE_SIZE = 500
@@ -66,6 +68,7 @@ export default function ContactsTab({ instances, offline }: ContactsTabProps) {
   const [toDate, setToDate] = useState(() => todayDateStr())
   const [hasMore, setHasMore] = useState(false)
   const [exporting, setExporting] = useState(false)
+  const [filterOpen, setFilterOpen] = useState(false)
   const [activeContact, setActiveContact] = useState<Contact | null>(null)
   const [transcript, setTranscript] = useState<string | null>(null)
   const [messages, setMessages] = useState<Message[] | null>(null)
@@ -291,6 +294,77 @@ export default function ContactsTab({ instances, offline }: ContactsTabProps) {
     }
   }
 
+  const activeFilterCount =
+    (category ? 1 : 0) +
+    (session ? 1 : 0) +
+    (responsavel ? 1 : 0) +
+    (encaminhamentoFilter ? 1 : 0) +
+    (period !== 'semana' ? 1 : 0)
+
+  const clearFilters = () => {
+    setCategory('')
+    setSession('')
+    setResponsavel('')
+    setEncaminhamentoFilter('')
+    setPeriod('semana')
+    setFromDate(localDateStr(weekStartLocal()))
+    setToDate(todayDateStr())
+  }
+
+  const periodPicker = (
+    <PeriodPicker
+      value={{ period, start: fromDate || null, end: toDate || null }}
+      onChange={(v) => {
+        setPeriod(v.period)
+        if (v.period === 'custom') {
+          setFromDate(v.start ?? '')
+          setToDate(v.end ?? '')
+        }
+      }}
+    />
+  )
+
+  const filterSelects = (
+    <>
+      <select value={category} onChange={(e) => setCategory(e.target.value)}>
+        <option value="">Todas as categorias</option>
+        {categories.map((c) => (
+          <option key={c} value={c}>
+            {c}
+          </option>
+        ))}
+      </select>
+      <select value={session} onChange={(e) => setSession(e.target.value)}>
+        <option value="">Todas as sessões</option>
+        {instanceNames.map((name) => (
+          <option key={name} value={name}>
+            {name}
+          </option>
+        ))}
+      </select>
+      <select value={responsavel} onChange={(e) => setResponsavel(e.target.value)}>
+        <option value="">Todos os responsáveis</option>
+        {responsaveis.map((r) => (
+          <option key={r} value={r}>
+            {r}
+          </option>
+        ))}
+      </select>
+      <select
+        value={encaminhamentoFilter}
+        onChange={(e) => setEncaminhamentoFilter(e.target.value)}
+      >
+        <option value="">Todos os encaminhamentos</option>
+        <option value="none">—</option>
+        {encaminhamentoOptions.map((o) => (
+          <option key={o} value={o}>
+            {o}
+          </option>
+        ))}
+      </select>
+    </>
+  )
+
   return (
     <>
       <div className="filters filters-contatos">
@@ -301,88 +375,57 @@ export default function ContactsTab({ instances, offline }: ContactsTabProps) {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        <select value={category} onChange={(e) => setCategory(e.target.value)}>
-          <option value="">Todas as categorias</option>
-          {categories.map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
-        </select>
-        <select value={session} onChange={(e) => setSession(e.target.value)}>
-          <option value="">Todas as sessões</option>
-          {instanceNames.map((name) => (
-            <option key={name} value={name}>
-              {name}
-            </option>
-          ))}
-        </select>
-        <select value={responsavel} onChange={(e) => setResponsavel(e.target.value)}>
-          <option value="">Todos os responsáveis</option>
-          {responsaveis.map((r) => (
-            <option key={r} value={r}>
-              {r}
-            </option>
-          ))}
-        </select>
-        <select
-          value={encaminhamentoFilter}
-          onChange={(e) => setEncaminhamentoFilter(e.target.value)}
-        >
-          <option value="">Todos os encaminhamentos</option>
-          <option value="none">—</option>
-          {encaminhamentoOptions.map((o) => (
-            <option key={o} value={o}>
-              {o}
-            </option>
-          ))}
-        </select>
-        <div className="period-group">
-          <PeriodPicker
-            value={{ period, start: fromDate || null, end: toDate || null }}
-            onChange={(v) => {
-              setPeriod(v.period)
-              if (v.period === 'custom') {
-                setFromDate(v.start ?? '')
-                setToDate(v.end ?? '')
-              }
-            }}
-          />
-          <button
-            type="button"
-            className="period-action"
-            onClick={() => void exportCsv()}
-            disabled={exporting || loading}
-            aria-busy={exporting}
-            aria-label="Baixar CSV"
-            title={
-              exporting
-                ? 'Gerando CSV…'
-                : 'Baixar a lista filtrada em CSV, com todas as colunas'
-            }
-          >
-            {exporting ? (
-              <span className="period-action-spin" aria-hidden="true" />
-            ) : (
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                <polyline points="7 10 12 15 17 10" />
-                <line x1="12" y1="15" x2="12" y2="3" />
-              </svg>
-            )}
-          </button>
+
+        <div className="filters-desktop">
+          {filterSelects}
+          <div className="period-group">{periodPicker}</div>
         </div>
+
+        <FilterButton activeCount={activeFilterCount} onClick={() => setFilterOpen(true)} />
+
+        <button
+          type="button"
+          className="tool-btn"
+          onClick={() => void exportCsv()}
+          disabled={exporting || loading}
+          aria-busy={exporting}
+          aria-label="Baixar CSV"
+          title={
+            exporting
+              ? 'Gerando CSV…'
+              : 'Baixar a lista filtrada em CSV, com todas as colunas'
+          }
+        >
+          {exporting ? (
+            <span className="period-action-spin" aria-hidden="true" />
+          ) : (
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+          )}
+        </button>
       </div>
+
+      {filterOpen && (
+        <FilterDialog onClose={() => setFilterOpen(false)} onClear={clearFilters}>
+          <div className="filter-fields">
+            {filterSelects}
+            {periodPicker}
+          </div>
+        </FilterDialog>
+      )}
 
       <div className="panel-note">
         Registros das conversas 1:1 de Pernambuco, um por pessoa. Aqui você consulta, busca e edita
@@ -395,7 +438,7 @@ export default function ContactsTab({ instances, offline }: ContactsTabProps) {
 
       {!loading && !error && (
         <>
-          <div className="table-wrap" ref={wrapRef} onScroll={handleScroll}>
+          <div className="table-wrap table-contatos" ref={wrapRef} onScroll={handleScroll}>
             <table>
               <thead>
                 <tr>
@@ -417,7 +460,7 @@ export default function ContactsTab({ instances, offline }: ContactsTabProps) {
                     className="row-clickable"
                     onClick={() => void openConversation(c)}
                   >
-                    <td>
+                    <td data-label="Nome">
                       {isEmpty(c.contact_name) ? (
                         <span onClick={(e) => e.stopPropagation()}>
                           <EditableText
@@ -432,7 +475,7 @@ export default function ContactsTab({ instances, offline }: ContactsTabProps) {
                         </span>
                       )}
                     </td>
-                    <td>
+                    <td data-label="Telefone">
                       {isEmpty(c.phone) ? (
                         <span onClick={(e) => e.stopPropagation()}>
                           <EditableText
@@ -447,11 +490,11 @@ export default function ContactsTab({ instances, offline }: ContactsTabProps) {
                         </span>
                       )}
                     </td>
-                    <td className="muted">{c.instance_name ?? '—'}</td>
-                    <td>
+                    <td className="muted" data-label="Sessão">{c.instance_name ?? '—'}</td>
+                    <td data-label="Categoria" className="col-secondary">
                       <span className="badge">{categoryByInstance.get(c.instance_name ?? '') ?? '—'}</span>
                     </td>
-                    <td className="muted">
+                    <td className="muted" data-label="Última msg">
                       {fmtDate(c.last_message_at)}
                       {c.last_message_from === 'me' && (
                         <span
@@ -467,14 +510,14 @@ export default function ContactsTab({ instances, offline }: ContactsTabProps) {
                         </span>
                       )}
                     </td>
-                    <td>{c.status ?? <span className="muted">—</span>}</td>
-                    <td onClick={(e) => e.stopPropagation()}>
+                    <td data-label="Status" className="col-secondary">{c.status ?? <span className="muted">—</span>}</td>
+                    <td data-label="Encaminhamento" className="col-secondary" onClick={(e) => e.stopPropagation()}>
                       <EncaminhamentoSelect
                         value={c.encaminhamento}
                         onChange={(v) => void saveEncaminhamento(c.id, v).catch(() => {})}
                       />
                     </td>
-                    <td>
+                    <td data-label="Temperatura" className="col-secondary">
                       {c.temperatura_sugerida ? (
                         <span
                           className={`sugestao sugestao-${c.temperatura_sugerida}`}
@@ -486,7 +529,7 @@ export default function ContactsTab({ instances, offline }: ContactsTabProps) {
                         <span className="muted">—</span>
                       )}
                     </td>
-                    <td>
+                    <td data-label="Responsável">
                       {c.responsavel ?? responsavelByInstance.get(c.instance_name ?? '') ?? (
                         <span className="muted">—</span>
                       )}
