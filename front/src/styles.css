@@ -545,6 +545,13 @@ select {
   font-size: 14px;
 }
 
+input[type='file'] {
+  width: 100%;
+  max-width: 100%;
+  color: var(--text);
+  font-size: 13px;
+}
+
 .refresh {
   padding: 6px 14px;
   background: #21262d;
@@ -2051,6 +2058,12 @@ td.cell-clip {
   .modal-body,
   .encaminhamento-body {
     overflow-y: auto;
+    overflow-x: hidden;
+  }
+
+  .modal-title {
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
 
   .modal-actions,
