@@ -7,6 +7,8 @@ import { useClosing } from '../lib/useClosing'
 import { fmtDate } from '../lib/format'
 import type { AudioSave, AudioSaveStatus, AudioTrigger, Instance } from '../types'
 import EditableText from './EditableText'
+import FilterDialog from './FilterDialog'
+import FilterButton from './FilterButton'
 
 const PAGE_SIZE = 200
 
@@ -28,6 +30,7 @@ export default function AudiosTab({ instances, offline }: AudiosTabProps) {
   const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
+  const [filterOpen, setFilterOpen] = useState(false)
   const [hasMore, setHasMore] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   const [resending, setResending] = useState<string | null>(null)
@@ -228,6 +231,17 @@ export default function AudiosTab({ instances, offline }: AudiosTabProps) {
     setTriggers((prev) => prev.filter((t) => t.id !== id))
   }
 
+  const activeFilterCount = statusFilter ? 1 : 0
+
+  const filterSelects = (
+    <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+      <option value="">Todos os status</option>
+      <option value="pendente">Pendentes</option>
+      <option value="salvo">Salvos</option>
+      <option value="erro">Com erro</option>
+    </select>
+  )
+
   return (
     <>
       <div className="filters">
@@ -238,16 +252,34 @@ export default function AudiosTab({ instances, offline }: AudiosTabProps) {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-          <option value="">Todos os status</option>
-          <option value="pendente">Pendentes</option>
-          <option value="salvo">Salvos</option>
-          <option value="erro">Com erro</option>
-        </select>
-        <button type="button" className="refresh" onClick={() => void openTriggers()}>
-          Emojis-gatilho
+        <div className="filters-desktop">{filterSelects}</div>
+        <FilterButton activeCount={activeFilterCount} onClick={() => setFilterOpen(true)} />
+        <button type="button" className="action-btn" onClick={() => void openTriggers()}>
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <circle cx="12" cy="12" r="10" />
+            <path d="M8 14s1.5 2 4 2 4-2 4-2" />
+            <line x1="9" y1="9" x2="9.01" y2="9" />
+            <line x1="15" y1="9" x2="15.01" y2="9" />
+          </svg>
+          <span className="btn-label">Emojis-gatilho</span>
         </button>
       </div>
+
+      {filterOpen && (
+        <FilterDialog onClose={() => setFilterOpen(false)} onClear={() => setStatusFilter('')}>
+          <div className="filter-fields">{filterSelects}</div>
+        </FilterDialog>
+      )}
 
       <div className="panel-note">
         Áudios que entram pra campanha quando o operador responde com o emoji de gatilho.
@@ -276,23 +308,23 @@ export default function AudiosTab({ instances, offline }: AudiosTabProps) {
             <tbody>
               {filtered.map((s) => (
                 <tr key={s.id}>
-                  <td>
+                  <td data-label="Contato">
                     {s.contact_name ?? s.phone ?? s.remote_jid ?? '—'}
                     {s.phone && s.contact_name && <span className="muted"> · {s.phone}</span>}
                     {s.error && <div className="muted" title={s.error}>{s.error.slice(0, 60)}</div>}
                   </td>
-                  <td className="muted">{s.instance_name ?? '—'}</td>
-                  <td>
+                  <td className="muted col-secondary" data-label="Sessão">{s.instance_name ?? '—'}</td>
+                  <td className="col-secondary" data-label="Categoria">
                     <span className="badge">{categoryByInstance.get(s.instance_name ?? '') ?? '—'}</span>
                   </td>
-                  <td>{s.trigger_emoji ?? <span className="muted">—</span>}</td>
-                  <td>
+                  <td className="col-secondary" data-label="Emoji">{s.trigger_emoji ?? <span className="muted">—</span>}</td>
+                  <td data-label="Status">
                     <span className={`badge ${s.status === 'salvo' ? 'badge-on' : s.status === 'erro' ? 'badge-off' : ''}`}>
                       {STATUS_LABEL[s.status]}
                     </span>
                   </td>
-                  <td className="muted">{fmtDate(s.audio_ts)}</td>
-                  <td>
+                  <td className="muted col-secondary" data-label="Áudio em">{fmtDate(s.audio_ts)}</td>
+                  <td data-label="Drive">
                     {s.drive_url ? (
                       <a href={s.drive_url} target="_blank" rel="noreferrer">
                         Abrir
@@ -301,8 +333,8 @@ export default function AudiosTab({ instances, offline }: AudiosTabProps) {
                       <span className="muted">—</span>
                     )}
                   </td>
-                  <td className="muted">{fmtDate(s.created_at)}</td>
-                  <td>
+                  <td className="muted" data-label="Data">{fmtDate(s.created_at)}</td>
+                  <td data-label="Ação">
                     {s.status !== 'salvo' && (
                       <button
                         type="button"

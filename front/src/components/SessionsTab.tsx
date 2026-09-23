@@ -4,6 +4,8 @@ import { errorMessage } from '../lib/errors'
 import { fmtDate } from '../lib/format'
 import { listNotionUsers, type NotionUser } from '../lib/notion'
 import type { Instance, Responsavel } from '../types'
+import FilterDialog from './FilterDialog'
+import FilterButton from './FilterButton'
 
 const CATEGORIES = ['TÔ COM JOÃO', 'MOBILIZA', 'CHEGA JUNTO PE', 'IR']
 
@@ -11,6 +13,43 @@ function categoryOptions(current?: string | null): string[] {
   const set = new Set(CATEGORIES)
   if (current) set.add(current)
   return Array.from(set)
+}
+
+function SessionStatusIcon({ offline, connected }: { offline: boolean; connected: boolean }) {
+  if (offline) {
+    return (
+      <span className="status-icon offline" title="offline" aria-label="offline" role="img">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <line x1="1" y1="1" x2="23" y2="23" />
+          <path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55" />
+          <path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39" />
+          <path d="M10.71 5.05A16 16 0 0 1 22.58 9" />
+          <path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88" />
+          <path d="M8.53 16.11a6 6 0 0 1 6.95 0" />
+          <line x1="12" y1="20" x2="12.01" y2="20" />
+        </svg>
+      </span>
+    )
+  }
+  if (connected) {
+    return (
+      <span className="status-icon online" title="online" aria-label="online" role="img">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M5 12.55a11 11 0 0 1 14.08 0" />
+          <path d="M1.42 9a16 16 0 0 1 21.16 0" />
+          <path d="M8.53 16.11a6 6 0 0 1 6.95 0" />
+          <line x1="12" y1="20" x2="12.01" y2="20" />
+        </svg>
+      </span>
+    )
+  }
+  return (
+    <span className="status-icon unknown" title="Sem estado" aria-label="Sem estado" role="img">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <line x1="6" y1="12" x2="18" y2="12" />
+      </svg>
+    </span>
+  )
 }
 
 interface SessionsTabProps {
@@ -22,6 +61,8 @@ interface SessionsTabProps {
 export default function SessionsTab({ instances, offline, onChanged }: SessionsTabProps) {
   const [search, setSearch] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('')
+  const [filterOpen, setFilterOpen] = useState(false)
+  const [configInstance, setConfigInstance] = useState<Instance | null>(null)
   const [showForm, setShowForm] = useState(false)
   const [newName, setNewName] = useState('')
   const [newCategory, setNewCategory] = useState('')
@@ -148,6 +189,20 @@ export default function SessionsTab({ instances, offline, onChanged }: SessionsT
     onChanged()
   }
 
+  const changeConfigCategory = (value: string) => {
+    if (!configInstance) return
+    const name = configInstance.name
+    setConfigInstance({ ...configInstance, category: value || null })
+    void updateCategory(name, value)
+  }
+
+  const changeConfigResponsavel = (value: string) => {
+    if (!configInstance) return
+    const name = configInstance.name
+    setConfigInstance({ ...configInstance, responsavel: value || null })
+    void updateResponsavel(name, value).catch(() => {})
+  }
+
   const openRespForm = async () => {
     setNewRespName('')
     setNewRespNotion('')
@@ -207,6 +262,19 @@ export default function SessionsTab({ instances, offline, onChanged }: SessionsT
     }
   }
 
+  const activeFilterCount = categoryFilter ? 1 : 0
+
+  const filterSelects = (
+    <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
+      <option value="">Todas as categorias</option>
+      {categories.map((c) => (
+        <option key={c} value={c}>
+          {c}
+        </option>
+      ))}
+    </select>
+  )
+
   return (
     <>
       <div className="filters">
@@ -217,21 +285,51 @@ export default function SessionsTab({ instances, offline, onChanged }: SessionsT
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
-          <option value="">Todas as categorias</option>
-          {categories.map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
-        </select>
-        <button type="button" className="refresh" onClick={openRespForm}>
-          Cadastrar responsável
+        <div className="filters-desktop">{filterSelects}</div>
+        <FilterButton activeCount={activeFilterCount} onClick={() => setFilterOpen(true)} />
+        <button type="button" className="action-btn" onClick={openRespForm}>
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+            <circle cx="9" cy="7" r="4" />
+            <line x1="19" y1="8" x2="19" y2="14" />
+            <line x1="22" y1="11" x2="16" y2="11" />
+          </svg>
+          <span className="btn-label">Cadastrar responsável</span>
         </button>
-        <button type="button" className="refresh" onClick={openForm}>
-          Adicionar sessão
+        <button type="button" className="action-btn" onClick={openForm}>
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <line x1="12" y1="5" x2="12" y2="19" />
+            <line x1="5" y1="12" x2="19" y2="12" />
+          </svg>
+          <span className="btn-label">Adicionar sessão</span>
         </button>
       </div>
+
+      {filterOpen && (
+        <FilterDialog onClose={() => setFilterOpen(false)} onClear={() => setCategoryFilter('')}>
+          <div className="filter-fields">{filterSelects}</div>
+        </FilterDialog>
+      )}
 
       <div className="panel-note">
         Aqui você acompanha as sessões do WhatsApp conectadas e quem é o responsável por cada uma.
@@ -240,7 +338,7 @@ export default function SessionsTab({ instances, offline, onChanged }: SessionsT
 
       {success && <div className="success">{success}</div>}
 
-      <div className="table-wrap">
+      <div className="table-wrap table-sessions">
         <table>
           <thead>
             <tr>
@@ -254,8 +352,32 @@ export default function SessionsTab({ instances, offline, onChanged }: SessionsT
           <tbody>
             {filtered.map((inst) => (
               <tr key={inst.name}>
-                <td className="strong">{inst.name}</td>
-                <td>
+                <td className="strong" data-label="Nome">
+                  {inst.name}
+                  <button
+                    type="button"
+                    className="session-config-btn"
+                    onClick={() => setConfigInstance(inst)}
+                    aria-label={`Configurar ${inst.name}`}
+                    title="Categoria e responsável"
+                  >
+                    <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <circle cx="12" cy="12" r="3" />
+                      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                    </svg>
+                  </button>
+                </td>
+                <td className="col-secondary" data-label="Categoria">
                   <select
                     value={inst.category ?? ''}
                     onChange={(e) => void updateCategory(inst.name, e.target.value)}
@@ -268,7 +390,7 @@ export default function SessionsTab({ instances, offline, onChanged }: SessionsT
                     ))}
                   </select>
                 </td>
-                <td>
+                <td className="col-secondary" data-label="Responsável">
                   <select
                     value={responsavelNames.includes(inst.responsavel ?? '') ? (inst.responsavel ?? '') : ''}
                     onChange={(e) => void updateResponsavel(inst.name, e.target.value)}
@@ -281,7 +403,7 @@ export default function SessionsTab({ instances, offline, onChanged }: SessionsT
                     ))}
                   </select>
                 </td>
-                <td>
+                <td data-label="Estado">
                   {inst.offline ? (
                     <span className="badge badge-off">offline</span>
                   ) : inst.connection_state ? (
@@ -289,8 +411,9 @@ export default function SessionsTab({ instances, offline, onChanged }: SessionsT
                   ) : (
                     <span className="muted">—</span>
                   )}
+                  <SessionStatusIcon offline={!!inst.offline} connected={!!inst.connection_state} />
                 </td>
-                <td className="muted">{fmtDate(inst.last_sync_at)}</td>
+                <td className="muted" data-label="Última sincronização">{fmtDate(inst.last_sync_at)}</td>
               </tr>
             ))}
             {filtered.length === 0 && (
@@ -307,6 +430,64 @@ export default function SessionsTab({ instances, offline, onChanged }: SessionsT
           </tbody>
         </table>
       </div>
+
+      {configInstance && (
+        <div className="modal-overlay" onClick={() => setConfigInstance(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <header className="modal-header">
+              <h2 className="modal-title">Configurar sessão</h2>
+              <button
+                type="button"
+                className="drawer-close"
+                onClick={() => setConfigInstance(null)}
+                aria-label="Fechar"
+              >
+                ✕
+              </button>
+            </header>
+            <div className="modal-body">
+              <div className="strong">{configInstance.name}</div>
+              <label className="modal-field">
+                <span>Categoria</span>
+                <select
+                  value={configInstance.category ?? ''}
+                  onChange={(e) => changeConfigCategory(e.target.value)}
+                >
+                  <option value="">—</option>
+                  {categoryOptions(configInstance.category).map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="modal-field">
+                <span>Responsável</span>
+                <select
+                  value={
+                    responsavelNames.includes(configInstance.responsavel ?? '')
+                      ? (configInstance.responsavel ?? '')
+                      : ''
+                  }
+                  onChange={(e) => changeConfigResponsavel(e.target.value)}
+                >
+                  <option value="">—</option>
+                  {responsavelNames.map((r) => (
+                    <option key={r} value={r}>
+                      {r}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <footer className="modal-actions">
+              <button type="button" className="dr-apply" onClick={() => setConfigInstance(null)}>
+                Fechar
+              </button>
+            </footer>
+          </div>
+        </div>
+      )}
 
       {showForm && (
         <div className="modal-overlay" onClick={closeForm}>

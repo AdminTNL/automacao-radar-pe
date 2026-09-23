@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { supabase } from './lib/supabase'
-import { me, logout } from './lib/auth'
+import { me } from './lib/auth'
 import { isOfflineError } from './lib/errors'
 import { useAutoRefresh } from './lib/useAutoRefresh'
 import logo from './assets/logoc5.png'
@@ -16,6 +16,70 @@ import Login from './components/Login'
 type Tab = 'contatos' | 'sessoes' | 'casos' | 'audios' | 'radar' | 'missoes'
 type AuthState = 'loading' | 'authed' | 'guest'
 
+const TABS: { id: Tab; label: string; short: string }[] = [
+  { id: 'contatos', label: 'Contatos', short: 'Contatos' },
+  { id: 'sessoes', label: 'Sessões', short: 'Sessões' },
+  { id: 'missoes', label: 'Missões', short: 'Missões' },
+  { id: 'casos', label: 'Casos pro Radar', short: 'Casos' },
+  { id: 'audios', label: 'Áudios pra Campanha', short: 'Áudios' },
+  { id: 'radar', label: 'Radar Mobiliza PE', short: 'Radar' },
+]
+
+function TabIcon({ tab }: { tab: Tab }) {
+  switch (tab) {
+    case 'contatos':
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+          <circle cx="9" cy="7" r="4" />
+          <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+          <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+        </svg>
+      )
+    case 'sessoes':
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="5" y="2" width="14" height="20" rx="2" />
+          <line x1="12" y1="18" x2="12.01" y2="18" />
+        </svg>
+      )
+    case 'missoes':
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="10" />
+          <circle cx="12" cy="12" r="6" />
+          <circle cx="12" cy="12" r="2" />
+        </svg>
+      )
+    case 'casos':
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" />
+          <line x1="4" y1="22" x2="4" y2="15" />
+        </svg>
+      )
+    case 'audios':
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+          <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+          <line x1="12" y1="19" x2="12" y2="23" />
+        </svg>
+      )
+    case 'radar':
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M4.9 19.1a10 10 0 0 1 0-14.2" />
+          <path d="M19.1 4.9a10 10 0 0 1 0 14.2" />
+          <path d="M7.8 16.2a6 6 0 0 1 0-8.4" />
+          <path d="M16.2 7.8a6 6 0 0 1 0 8.4" />
+          <circle cx="12" cy="12" r="2" />
+        </svg>
+      )
+  }
+  return null
+}
+
 export default function App() {
   const [auth, setAuth] = useState<AuthState>('loading')
   const [instances, setInstances] = useState<Instance[]>([])
@@ -29,11 +93,6 @@ export default function App() {
   useEffect(() => {
     void me().then((ok) => setAuth(ok ? 'authed' : 'guest'))
   }, [])
-
-  async function doLogout() {
-    await logout()
-    setAuth('guest')
-  }
 
   const loadInstances = useCallback(async () => {
     const { data, error } = await supabase
@@ -135,81 +194,54 @@ export default function App() {
         <img className="logo" src={logo} alt="Logo" />
         <h1>Botando pra Moer</h1>
         <span className="subtitle">Atualiza a cada 60s</span>
-        <button type="button" className="logout-btn" onClick={() => void doLogout()}>
-          Sair
-        </button>
       </header>
 
       <nav className="tabs">
-        <button
-          type="button"
-          className={`tab ${activeTab === 'contatos' ? 'tab-active' : ''}`}
-          onClick={() => openTab('contatos')}
-        >
-          Contatos
-        </button>
-        <button
-          type="button"
-          className={`tab ${activeTab === 'sessoes' ? 'tab-active' : ''}`}
-          onClick={() => openTab('sessoes')}
-        >
-          Sessões
-        </button>
-        <button
-          type="button"
-          className={`tab ${activeTab === 'missoes' ? 'tab-active' : ''}`}
-          onClick={() => openTab('missoes')}
-        >
-          Missões
-          <span className={`tab-badge${newMissoesCount > 0 ? '' : ' tab-badge-empty'}`}>
-            {newMissoesCount > 0 ? newMissoesCount : 0}
-          </span>
-        </button>
-        <button
-          type="button"
-          className={`tab ${activeTab === 'casos' ? 'tab-active' : ''}`}
-          onClick={() => openTab('casos')}
-        >
-          Casos pro Radar
-          <span className={`tab-badge${newCasesCount > 0 ? '' : ' tab-badge-empty'}`}>
-            {newCasesCount > 0 ? newCasesCount : 0}
-          </span>
-        </button>
-        <button
-          type="button"
-          className={`tab ${activeTab === 'audios' ? 'tab-active' : ''}`}
-          onClick={() => openTab('audios')}
-        >
-          Áudios pra Campanha
-        </button>
-        <button
-          type="button"
-          className={`tab ${activeTab === 'radar' ? 'tab-active' : ''}`}
-          onClick={() => openTab('radar')}
-        >
-          Radar Mobiliza PE
-        </button>
+        {TABS.map((t) => {
+          const badge = t.id === 'missoes' ? newMissoesCount : t.id === 'casos' ? newCasesCount : null
+          return (
+            <button
+              key={t.id}
+              type="button"
+              className={`tab ${activeTab === t.id ? 'tab-active' : ''}`}
+              onClick={() => openTab(t.id)}
+            >
+              <span className="tab-icon" aria-hidden="true">
+                <TabIcon tab={t.id} />
+              </span>
+              <span className="tab-label tab-label-full">{t.label}</span>
+              <span className="tab-label tab-label-short">{t.short}</span>
+              {badge !== null && (
+                <span className={`tab-badge${badge > 0 ? '' : ' tab-badge-empty'}`}>
+                  {badge > 0 ? badge : 0}
+                </span>
+              )}
+            </button>
+          )
+        })}
       </nav>
 
-      {offline ? (
-        <div className="offline-banner">Sistema temporariamente fora do ar — tentando reconectar…</div>
-      ) : instancesError ? (
-        <div className="error">Erro: {instancesError}</div>
-      ) : null}
+      <div className="tab-content">
+        {offline ? (
+          <div className="offline-banner">Sistema temporariamente fora do ar — tentando reconectar…</div>
+        ) : instancesError ? (
+          <div className="error">Erro: {instancesError}</div>
+        ) : null}
 
-      {activeTab === 'contatos' ? (
-        <ContactsTab instances={instances} offline={offline} />
-      ) : activeTab === 'sessoes' ? (
-        <SessionsTab instances={instances} offline={offline} onChanged={() => void loadInstances()} />
-      ) : activeTab === 'casos' ? (
-        <CasesTab instances={instances} offline={offline} />
-      ) : activeTab === 'radar' ? (
-        <RadarTab offline={offline} />
-      ) : activeTab === 'missoes' ? (
-        <MissionsTab offline={offline} />
-      ) : (
-        <AudiosTab instances={instances} offline={offline} />
-      )}
+        {activeTab === 'contatos' ? (
+          <ContactsTab instances={instances} offline={offline} />
+        ) : activeTab === 'sessoes' ? (
+          <SessionsTab instances={instances} offline={offline} onChanged={() => void loadInstances()} />
+        ) : activeTab === 'casos' ? (
+          <CasesTab instances={instances} offline={offline} />
+        ) : activeTab === 'radar' ? (
+          <RadarTab offline={offline} />
+        ) : activeTab === 'missoes' ? (
+          <MissionsTab offline={offline} />
+        ) : (
+          <AudiosTab instances={instances} offline={offline} />
+        )}
+      </div>
     </div>
   )
 }
