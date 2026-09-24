@@ -10,5 +10,8 @@
   },
   "vars": {
     "SUPABASE_URL": "https://database.tnledu.shop"
+  },
+  "triggers": {
+    "crons": ["*/5 * * * *"]
   }
 }

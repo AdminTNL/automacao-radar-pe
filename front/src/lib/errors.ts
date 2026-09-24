@@ -11,7 +11,7 @@ export function isOfflineError(error: SupabaseErrorLike | null | undefined): boo
   if (error.code === 'BACKEND_UNREACHABLE') return true
   if (error.code) return false
   const text = `${error.message ?? ''} ${error.details ?? ''}`
-  return /fetch failed|failed to fetch|TypeError|NetworkError|1101|Worker threw exception|bad gateway|service unavailable|connection (refused|reset|timed out)/i.test(
+  return /fetch failed|failed to fetch|TypeError|NetworkError|error code:\s*\d{4}|1016|1033|530|1101|Worker threw exception|bad gateway|service unavailable|connection (refused|reset|timed out)/i.test(
     text,
   )
 }
