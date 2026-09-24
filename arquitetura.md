@@ -200,6 +200,14 @@ RadarTab (front) → GET /api/notion/query (Worker) → 11 - Notion List Pages (
 - **Merge dos existentes:** `radar_pe_merge_lid_duplicates()` une chats da mesma instância que compartilham `msg_id` (mensagens + transcript regenerado), mantém o número como canônico, une contatos e apaga o `@lid`. Idempotente.
 - **Limpeza de órfãos:** `radar_pe_cleanup_orphan_lids()` apaga chats `@lid` **sem `messages`** (linha órfã da captação pré-canonicalização, cujo dado já migrou pro número), pulando contatos com edição manual. Idempotente. Como a canonicalização impede novos splits, não há novos órfãos — é limpeza única.
 
+## Observabilidade e Error 1016 (origem `database.tnledu.shop`)
+
+O app é um Worker (`radar-pe-front`) e fala com o Supabase **via proxy** (`/api/db` → `SUPABASE_URL`), nunca direto. Quando o edge do Cloudflare não resolve a origem desse hostname, o subrequest volta com **`Cloudflare Error 1016 — Origin DNS error`** (HTTP 5xx, corpo `text/plain` `error code: 1016`). O Worker normaliza isso para `{ code: 'BACKEND_UNREACHABLE' }` e o front mostra o banner "Sistema temporariamente fora do ar" (em vez do texto cru).
+
+- **Health:** `GET /api/health` (público) checa `SUPABASE_URL/rest/v1/` e responde `200 { ok: true, ... }` ou `503 { ok: false, ... }`. Aponte um monitor externo (ex.: UptimeRobot/BetterStack) para essa URL.
+- **Cron:** trigger a cada 5 min (`triggers.crons` no `wrangler.jsonc`) roda a mesma checagem e loga no Workers Logs / `wrangler tail` quando a origem cai.
+- **Diagnóstico:** `dig +short database.tnledu.shop` (deve resolver); conferir no painel Cloudflare o registro/origem do hostname e se a zona é partial/CNAME (subrequest de Worker exige o registro **na zona**); saúde do túnel (`cloudflared tunnel info`). O domínio raiz `tnledu.shop` está fora do token do `wrangler` do time → escalar (Lucas/Gab). Guardar o **Ray ID** da tela de erro.
+
 ## Pontos em aberto
 
 1. **Quem abre o caso**: resolvido — a ferramenta cria `pendente` e o time aprova/descarta no front (aba "Casos pro Radar").

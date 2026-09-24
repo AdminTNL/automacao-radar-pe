@@ -192,6 +192,7 @@ wrangler deploy
 ```
 
 - `SUPABASE_URL` fica em `vars` no `wrangler.jsonc`.
+- **Health/monitor:** `GET /api/health` checa o alcance do Supabase (200/503) — aponte um monitor externo para essa URL; o cron de 5 min (`triggers.crons`) loga no `wrangler tail` quando a origem cai. Detalhes em `arquitetura.md` ("Observabilidade e Error 1016").
 - **Login persistente:** o cookie dura 1 ano (teto do browser) e a sessão só expira ao rotacionar o `AUTH_SECRET`. Para trocar a senha (e derrubar todo mundo): `wrangler secret put APP_PASSWORD` **e** `wrangler secret put AUTH_SECRET`.
 
 ## Setup Notion (Etapa 3)

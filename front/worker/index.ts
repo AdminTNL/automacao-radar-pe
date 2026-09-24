@@ -1,3 +1,5 @@
+import { isCloudflareOriginError } from './origin-error'
+
 interface Env {
   SUPABASE_URL: string
   SUPABASE_SERVICE_ROLE_KEY: string
@@ -150,7 +152,53 @@ async function proxySupabase(request: Request, env: Env): Promise<Response> {
       502,
     )
   }
+
+  // Cloudflare pode responder o subrequest com um erro de origem (ex.: Error
+  // 1016 — Origin DNS error) em vez de lançar. Nesse caso, normalize para o
+  // mesmo contrato de "fora do ar" para o front exibir o banner correto.
+  if (res.status >= 500) {
+    const peek = await res.clone().text()
+    if (isCloudflareOriginError(res.status, res.headers.get('content-type'), peek)) {
+      return json(
+        { code: 'BACKEND_UNREACHABLE', message: 'Sistema temporariamente fora do ar' },
+        502,
+      )
+    }
+  }
+
   return res
+}
+
+// Checagem rasa de alcance do Supabase usada pelo /api/health e pelo cron.
+// Qualquer resposta HTTP (inclusive 401/500 da própria aplicação) conta como
+// "alcançável"; só um erro de origem do Cloudflare ou a falha do fetch contam
+// como inacessível.
+async function checkSupabase(env: Env): Promise<{ reachable: boolean; status: number | null }> {
+  try {
+    const res = await fetch(`${env.SUPABASE_URL}/rest/v1/`, {
+      headers: {
+        apikey: env.SUPABASE_SERVICE_ROLE_KEY,
+        authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+      },
+    })
+    if (res.status >= 500) {
+      const peek = await res.clone().text()
+      if (isCloudflareOriginError(res.status, res.headers.get('content-type'), peek)) {
+        return { reachable: false, status: res.status }
+      }
+    }
+    return { reachable: true, status: res.status }
+  } catch {
+    return { reachable: false, status: null }
+  }
+}
+
+async function handleHealth(env: Env): Promise<Response> {
+  const supabase = await checkSupabase(env)
+  return json(
+    { ok: supabase.reachable, checkedAt: new Date().toISOString(), supabase },
+    supabase.reachable ? 200 : 503,
+  )
 }
 
 // Resolve o responsável pelo contato (nome) pro id do usuário no Notion
@@ -697,6 +745,8 @@ export default {
     if (url.pathname === '/api/auth/logout' && request.method === 'POST') return handleLogout()
     if (url.pathname === '/api/auth/me' && request.method === 'GET') return handleMe(request, env)
 
+    if (url.pathname === '/api/health' && request.method === 'GET') return handleHealth(env)
+
     if (url.pathname.startsWith('/api/db/')) {
       if (!(await isAuthed(request, env))) return json({ error: 'unauthorized' }, 401)
       return proxySupabase(request, env)
@@ -733,5 +783,15 @@ export default {
     }
 
     return json({ error: 'not found' }, 404)
+  },
+
+  async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
+    const supabase = await checkSupabase(env)
+    if (!supabase.reachable) {
+      console.error(
+        '[health] Supabase inacessível (possível Error 1016 — Origin DNS error)',
+        supabase.status ?? 'sem resposta HTTP',
+      )
+    }
   },
 } satisfies ExportedHandler<Env>

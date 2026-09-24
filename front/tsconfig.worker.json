@@ -9,5 +9,6 @@
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["worker"]
+  "include": ["worker"],
+  "exclude": ["worker/**/*.test.ts"]
 }
