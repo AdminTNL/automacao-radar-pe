@@ -10,6 +10,13 @@ createRoot(document.getElementById('root')!).render(
 )
 
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  const hadController = Boolean(navigator.serviceWorker.controller)
+  let refreshing = false
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController || refreshing) return
+    refreshing = true
+    window.location.reload()
+  })
   window.addEventListener('load', () => {
     void navigator.serviceWorker.register('/sw.js').catch(() => {})
   })
