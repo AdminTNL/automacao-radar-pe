@@ -1348,6 +1348,7 @@ td.cell-clip {
   background: rgba(1, 4, 9, 0.6);
   z-index: 40;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   place-items: center;
   padding: 16px;
   animation: overlay-in 0.16s ease;

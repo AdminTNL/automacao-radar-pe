@@ -1,4 +1,4 @@
-const CACHE = 'bpm-assets-v1'
+const CACHE = 'bpm-assets-v2'
 
 self.addEventListener('install', () => {
   self.skipWaiting()
